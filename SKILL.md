@@ -27,6 +27,52 @@ At the end of each run it also evaluates the taxonomy itself, flagging Collectio
 
 **Don't use for:** one-off bookmark lookups, deleting bookmarks, or bulk export.
 
+## Operations Allowed vs Forbidden
+
+The following rules apply to every run of this skill. No destructive operation runs without explicit user approval via the kanban board.
+
+### Raindrops (Bookmarks)
+
+| Operation | Allowed | Notes |
+|---|---|---|
+| Read / List | yes | Via `raindrops` and `get` commands |
+| Update note & description | yes | Core purpose of the skill — consolidate description into note |
+| Update collection assignment | yes | Core purpose — categorize into the right collection |
+| Update tags | yes | Core purpose — assign relevant tags |
+| **Delete** | **never** | Raindrops are never deleted |
+
+### Collections
+
+| Operation | Allowed | Notes |
+|---|---|---|
+| Read / List / Tree | yes | Via `collections` and `children` commands |
+| Create new | yes | Implicitly creates a kanban card for user approval first |
+| Rename | pending | Not yet implemented — add via `update` on collection endpoint |
+| Reparent | pending | Not yet implemented — Phase 7 may suggest it |
+| **Delete empty** | **only after kanban approval** | An empty collection may be deleted if the user approves the audit card |
+| **Delete non-empty** | **never** | A collection with bookmarks is never deleted. If a merge is needed, move bookmarks first, then flag the empty collection for deletion |
+
+### Tags
+
+| Operation | Allowed | Notes |
+|---|---|---|
+| Read / List | yes | Via `tags` command |
+| Assign to bookmark | yes | Core purpose — done in Phase 3c via raindrop update |
+| **Delete** | **never** | Tags are never deleted under any circumstance |
+| **Merge** | **only after kanban approval** | `merge-tags <source> <target>` reassigns all bookmarks from source to target, then removes the source tag. This is the **only** destructive tag operation, and only runs after the user approves the kanban card |
+
+### Summary of Destructive Rules
+
+| What | Rule |
+|---|---|
+| Deleting a raindrop | ❌ Forbidden — never, under any circumstance |
+| Deleting a collection | ⚠️ Only after user kanban approval, and only if collection is empty |
+| Deleting a tag | ❌ Forbidden — never, under any circumstance |
+| Merging two tags → removes source tag | ✅ Only after user kanban approval via `merge-tags` |
+| Merging two collections → removes source | ❌ Forbidden — not yet implemented |
+
+**Golden rule:** if an operation destroys data (removes a raindrop, tag, or collection), it must be explicitly approved by the user via a kanban card in the `raindrop-audit` board. The only exception is `merge-tags`, which removes the source tag after reassigning all its bookmarks, and that too requires kanban approval.
+
 ## Prerequisites
 
 ### Required Environment Variable
