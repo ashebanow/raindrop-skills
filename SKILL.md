@@ -117,15 +117,15 @@ Build two data structures (keep in working memory or write to `.hermes/cache/rai
 
 ### Phase 2 — Select Bookmarks to Process
 
-1. Scan all non-empty collections for eligible bookmarks. The Raindrop API limits pagination to **50 items per page** (`perpage=50` — using a higher value is silently capped). Paginate through every page until all items are seen or the batch is full. Use sequential requests with ~200ms pacing to avoid rate limiting (max ~120 req/min).
+1. Scan collections for eligible bookmarks. The Raindrop API limits pagination to **50 items per page** (`perpage=50` — using a higher value is silently capped). Paginate through every page until all items are seen or the batch is full. Use sequential requests with ~200ms pacing to avoid rate limiting (max ~120 req/min).
 
-2. **Unsorted collection**: Raindrop marks unsorted bookmarks with `collection.$id: -1` (not 0). The special collection ID `0` is used by the API endpoint `/raindrops/0` to fetch unsorted items, but the items themselves have `$id: -1`. Check for both when determining if a bookmark needs a collection.
+2. **Important — `collection=0` is NOT Unsorted**. The endpoint `/raindrops/0` returns **all bookmarks in the user's library** (the `count` field is the total bookmark count, not an unsorted count). To find unsorted bookmarks, use `/raindrops/-1` which returns bookmarks with `collection.$id: -1`. In practice most users have 0 truly unsorted bookmarks — they were either categorized on import or have always had a collection. Check `collection.$id` on individual responses to confirm.
 
 3. **Tracking tag**: every fully-processed bookmark gets a tracking tag `_categorized-v2`. A bookmark with this tag has been through the full pipeline (note + collection + tags) and is **not eligible** for the new pool. The tag is applied **only after all three sub-phases (3a, 3b, 3c) complete successfully** — never before. A partial update (e.g. notes + tags but no collection) should NOT receive the tracking tag.
 
 4. A bookmark is **eligible for the new pool** if **all** of these are true:
    - It **does not** have the `_categorized-v2` tag
-   - AND one or more of: `collection.$id` is `-1` (Unsorted), tags empty (ignoring `_categorized-v2`), no note/description
+   - AND one or more of: `collection.$id` is `-1` (truly Unsorted), tags empty (ignoring `_categorized-v2`), no note/description
 
 5. Collect the new pool — up to 100 bookmarks.
 
@@ -156,7 +156,7 @@ source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <
 
 #### 3b. Process the Collection Field
 
-- If the bookmark already has a Collection and it's not "Unsorted": **skip**.
+- If the bookmark already has a Collection and it's not truly Unsorted (`$id: -1`): **skip**.
 - Otherwise, use the Note (from 3a) to infer a suitable Collection from the existing tree.
 - If there's no Note yet (shouldn't happen — 3a runs first), write one via 3a first.
 - **Match logic**: scan the Collection tree. Look for semantic overlap between the Note/Description content and the Collection title/description. Prefer the most specific match (deepest in the tree).
@@ -374,7 +374,7 @@ The skill includes a reflection step where it considers:
 9. **Tracking tag `_categorized-v2`** — This tag is added to every processed bookmark. It should be excluded from relevance checks (it's meta-data, not a real tag). When checking if a bookmark has "no tags", ignore `_categorized-v2`. When inferring tags, never suggest removing `_categorized-v2`.
 10. **Quality scores are file-only** — Scores persist in `~/.hermes/cache/raindrop-quality.json`. No supermemory dependency. The JSON file must be manually deleted to reset trend data.
 11. **`perpage` cap is 50** — The Raindrop API silently caps `perpage` at 50. Using 200 returns only 50 items, which causes pagination loops to exit early and miss bookmarks. Always use `perpage=50` and paginate properly.
-12. **Unsorted uses `$id: -1`, not 0** — The API endpoint `/raindrops/0` fetches unsorted items, but those items have `collection.$id: -1` in their response. Check for both when filtering.
+12. **`/raindrops/0` returns ALL bookmarks, not Unsorted** — The `0` collection ID is a special endpoint that returns the entire library. To check for truly unsorted bookmarks, look for `collection.$id: -1` on individual bookmark responses. Use `/raindrops/-1` to fetch only unsorted items. Do not assume `count` from `/raindrops/0` represents unsorted — it's the total bookmark count.
 
 ## Verification Checklist
 
