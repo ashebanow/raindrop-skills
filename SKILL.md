@@ -306,7 +306,25 @@ source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py merge-ta
 
 Tags are never deleted or merged without explicit user approval via the kanban board.
 
-Record the audit findings in `~/.hermes/cache/raindrop-audit-<date>.md`.
+### Audit Log
+
+Every change made by this skill is recorded in a JSONL audit log at `~/.hermes/cache/raindrop-audit-log.jsonl`. One JSON object per line. Logged from every phase that modifies data.
+
+**What gets logged:**
+
+| Event | When | Fields |
+|-------|------|--------|
+| Raindrop updated | After Phase 3a/3b/3c PUT succeeds | `action: "update_raindrop"`, `raindrop_id`, `title`, `fields_changed: [...]`, `note_preview: "..."` |
+| Collection created | After Phase 6 create-collection succeeds | `action: "create_collection"`, `collection_id`, `title`, `parent_id`, `parent_title` |
+| Tags merged | After `merge-tags` completes | `action: "merge_tags"`, `source_tag`, `target_tag`, `bookmarks_affected: N` |
+| Kanban card approved | When a Phase 6 card is executed | `action: "kanban_approval"`, `card_title`, `decision`, `summary` |
+
+**Entry format:**
+```jsonl
+{"timestamp": "2026-06-10T00:30:00Z", "run_id": "2026-06-10-001", "action": "update_raindrop", "raindrop_id": 1751522131, "title": "logandonley/dotfiles", "fields_changed": ["note", "tags", "collection"], "note_preview": "Logan Donley's personal dotfiles managed with Chezmoi...", "tags": ["_categorized-v2", "dotfiles", "chezmoi", "config"], "collection_id": 70861622, "collection_title": "Dotfiles & Config"}
+```
+
+**Retention:** at the start of each run, prune all entries older than 7 days. This keeps the log lean while providing a full week of change history for debugging, rollback reference, and quality review.
 
 ### Quality Score Trend
 
@@ -371,7 +389,8 @@ The skill includes a reflection step where it considers:
 - [ ] Kanban cards created for pending decisions (Phase 5)
 - [ ] Approved Collections/Tags created via API
 - [ ] Taxonomy audit completed and results recorded
-- [ ] `.env` not committed to git (add `.env` to `.gitignore`)
+- [ ] Audit log pruned of entries >7 days old and new entries appended
+- [ ] `.env` not committed to git
 
 ## Related Skills
 
