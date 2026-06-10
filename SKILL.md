@@ -182,16 +182,42 @@ source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <
 
 ### Phase 4 — Score Output Quality
 
-**Before** and **After** processing the list, evaluate quality on these four axes. Score 1–10 each:
+Score quality at **three granularities**: per-raindrop, per-collection, and global. Each captures a different signal.
+
+#### Per-Raindrop (individual bookmark)
+
+For each bookmark in the processed list, score 1–10 on each axis. This is the finest grain — used to spot individual misassignments.
 
 | Axis | 1–3 | 4–7 | 8–10 |
 |------|-----|-----|------|
-| **Completeness** | Many bookmarks still missing Collection/Tags/Note | Most have 2/3 fields set | Every bookmark has Collection + Tags + Note |
-| **Succinctness** | Notes are verbose or rambling | Notes are reasonably concise | Notes are tight, URL-relevant, no fluff |
-| **Appropriate Tone** | Robotic or formal for personal bookmarks | Mixed, some awkward phrasing | Reads like the user wrote it themselves — natural, personal voice |
-| **Relevance** | Wrong Collections or Tags assigned | Mostly correct, a few mismatches | Every assignment is semantically precise |
+| **Completeness** | Missing 2+ of Collection/Tags/Note | Missing 1 of Collection/Tags/Note | Has all three: Collection, Tags, Note |
+| **Succinctness** | Note is verbose, rambling, or padded | Note is OK but could be tighter | Note is tight, URL-relevant, no fluff |
+| **Appropriate Tone** | Robotic or formal | Mixed, some awkward phrasing | Reads like you wrote it — natural, personal |
+| **Relevance** | Wrong Collection or Tags | Mostly correct, 1 mismatch | Every assignment is semantically precise |
 
-Store the before/after scores in `~/.hermes/cache/raindrop-quality.json` for long-run trend analysis.
+#### Per-Collection (aggregated per collection, including sub-collections)
+
+After all bookmarks are processed, roll up scores for each **root collection** (including its descendants). This catches taxonomy-level issues:
+
+| Metric | How it's calculated | What it signals |
+|--------|-------------------|-----------------|
+| **Completeness %** | % of bookmarks in this sub-tree that have all 3 fields | How well-categorised that topic area is |
+| **Breadth ratio** | `bookmark_count / ideal_max(25)` — ratio >1 means oversized | Collection may need sub-collections |
+| **Untagged %** | % of bookmarks with empty `tags` in this sub-tree | Is tagging being neglected in this area? |
+| **Sub-collection balance** | stddev of child bookmark counts — high stddev = one child dominates | Lopsided sub-collections may need rebalancing |
+
+#### Global (entire run)
+
+Roll up all per-raindrop and per-collection scores into a single run summary. Tracked in `~/.hermes/cache/raindrop-quality.json` for trend analysis.
+
+| Score | What it measures |
+|-------|-----------------|
+| **Avg per-raindrop score** | Mean of all 4 axes across all processed bookmarks |
+| **Avg completeness %** | % of all bookmarks (not just processed) that have all 3 fields |
+| **Healthy collections %** | % of root collections where breadth ≤ 1.0 (≤25 bookmarks) |
+| **Tagged coverage %** | % of bookmarks with at least 1 tag |
+
+**Trend detection:** compare global scores against the last 3 runs. If avg per-raindrop score drops ≥1 point for 2 consecutive runs, the skill halts and requests human review of its process before continuing.
 
 ### Phase 5 — Create Kanban Cards for Pending Decisions
 
