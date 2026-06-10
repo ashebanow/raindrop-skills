@@ -49,8 +49,7 @@ The following rules apply to every run of this skill. No destructive operation r
 | Create new | yes | Implicitly creates a kanban card for user approval first |
 | Rename | pending | Not yet implemented — add via `update` on collection endpoint |
 | Reparent | pending | Not yet implemented — Phase 7 may suggest it |
-| **Delete empty** | **only after kanban approval** | An empty collection may be deleted if the user approves the audit card |
-| **Delete non-empty** | **never** | A collection with bookmarks is never deleted. If a merge is needed, move bookmarks first, then flag the empty collection for deletion |
+| **Delete** | **never** | Collections are never deleted. Even if empty — they may be reused in the future. If a duplicate exists, flag it in the audit but leave it in place |
 
 ### Tags
 
@@ -66,7 +65,7 @@ The following rules apply to every run of this skill. No destructive operation r
 | What | Rule |
 |---|---|
 | Deleting a raindrop | ❌ Forbidden — never, under any circumstance |
-| Deleting a collection | ⚠️ Only after user kanban approval, and only if collection is empty |
+| Deleting a collection | ❌ Forbidden — never, under any circumstance. Even if empty |
 | Deleting a tag | ❌ Forbidden — never, under any circumstance |
 | Merging two tags → removes source tag | ✅ Only after user kanban approval via `merge-tags` |
 | Merging two collections → removes source | ❌ Forbidden — not yet implemented |
@@ -233,7 +232,6 @@ Each card goes to the `pending-review` list on the `raindrop-audit` board.
 2. For each completed card:
    - **New collection**: create via API using the python helper
    - **Tag merge**: run `python3 scripts/raindrop_api.py merge-tags <source> <target>`
-   - **Delete collection**: run `python3 scripts/raindrop_api.py delete-collection <id>`
    - **New tags**: already created implicitly on assignment in Phase 3c — no action needed
 3. Re-process the bookmarks now that new Collections/Tags exist.
 4. Archive completed cards with a summary of what was done.
@@ -268,7 +266,6 @@ If no suitable sub-collection exists and the parent is oversized, create a kanba
 **Improvement actions** (all gated through kanban cards):
 ```bash
 # Only after user approves the kanban card:
-source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py delete-collection <collection_id>
 source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py create-collection '{"title": "...", "parent": {"$id": ...}}'
 source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py merge-tags <source> <target>
 ```

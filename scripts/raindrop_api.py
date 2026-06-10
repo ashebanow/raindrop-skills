@@ -11,7 +11,6 @@ Actions:
   get <id>                Get a single raindrop
   update <id> <json>      Update a raindrop (JSON body)
   create-collection <json> Create a new collection (JSON body)
-  delete-collection <id>  Delete a collection
   merge-tags <source> <target>  Reassign all bookmarks from source tag to target tag
 
 Environment:
@@ -148,11 +147,6 @@ if __name__ == "__main__":
     elif action == "create-collection":
         data = json.loads(sys.argv[2])
         result = api("POST", "/collection", data)
-        print(json.dumps(result, indent=2))
-
-    elif action == "delete-collection":
-        cid = sys.argv[2]
-        result = api("DELETE", f"/collection/{cid}")
         print(json.dumps(result, indent=2))
 
     elif action == "merge-tags":
