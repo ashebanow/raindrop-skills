@@ -117,22 +117,27 @@ Build two data structures (keep in working memory or write to `.hermes/cache/rai
 
 ### Phase 2 — Select Bookmarks to Process
 
-1. Fetch all bookmarks (paginated, up to `limit=100` per page):
+1. Fetch all bookmarks across all collections (paginated, up to `limit=100` per page):
    ```bash
    # Unsorted (collection 0), 50 per page
    source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py raindrops 0 50
    ```
    (Use `collection=0` for "Unsorted", or any collection ID for a specific one.)
 
-2. **Tracking tag**: every bookmark processed by this skill gets a tracking tag `_categorized-v2`. A bookmark that has this tag has been through the pipeline before and is **not eligible** for new processing (it may still qualify as a filler — see step 4).
+2. **Tracking tag**: every bookmark processed by this skill gets a tracking tag `_categorized-v2`. A bookmark that has this tag has been through the pipeline before and is **not eligible** for the new pool (it may still qualify as a filler — see below).
 
-3. A bookmark is **eligible for new processing** if **all** of these are true:
+3. A bookmark is **eligible for the new pool** if **all** of these are true:
    - It **does not** have the `_categorized-v2` tag
    - AND one or more of: no Collection (or Unsorted), tags empty (ignoring `_categorized-v2`), no note/description
 
-4. Collect the eligible list — **at most 100 bookmarks**.
+4. Collect the new pool — up to 100 bookmarks.
 
-5. If the eligible list has <100 items, **fill the remaining slots** with bookmarks that DO have the `_categorized-v2` tag, sorted by oldest `lastUpdate` first (least recently processed). These are re-processing candidates — the taxonomy may have evolved since they were first categorized.
+5. **Filler queue**: if the new pool has fewer than 100 items, fill the remaining slots with bookmarks that **do** have the `_categorized-v2` tag, selected in this order:
+   - **Pass 1**: bookmarks with `lastUpdate` older than 24 hours, sorted oldest first. This catches stale categorizations that would benefit from an improved pipeline, while preventing the same bookmark from cycling every run.
+   - **Pass 2**: if still under 100, include bookmarks with `lastUpdate` within the last 24 hours, sorted oldest first. This ensures full batches even on small libraries.
+   - **Skip any** bookmark already in the new pool to avoid duplicates.
+
+6. **Why both signals?** `_categorized-v2` is the binary gate — has this bookmark ever gone through the pipeline? `lastUpdate` is the ageing signal — how stale is its last categorization? When the pipeline improves (new sub-collections, better tag matching, smarter notes), the most stale bookmarks get the benefit first. Together they produce a rolling reprocessing cycle without manual intervention.
 
 ### Phase 3 — Process Each Bookmark
 
