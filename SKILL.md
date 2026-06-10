@@ -124,14 +124,15 @@ Build two data structures (keep in working memory or write to `.hermes/cache/rai
    ```
    (Use `collection=0` for "Unsorted", or any collection ID for a specific one.)
 
-2. A bookmark is **eligible for processing** if **one or more** of:
-   - No `collection` or `collection.$id` refers to the "Unsorted" collection
-   - `tags` is empty or null
-   - `description` and `note` are both empty/null
+2. **Tracking tag**: every bookmark processed by this skill gets a tracking tag `_categorized-v2`. A bookmark that has this tag has been through the pipeline before and is **not eligible** for new processing (it may still qualify as a filler — see step 4).
 
-3. Collect the eligible list — **at most 100 bookmarks**.
+3. A bookmark is **eligible for new processing** if **all** of these are true:
+   - It **does not** have the `_categorized-v2` tag
+   - AND one or more of: no Collection (or Unsorted), tags empty (ignoring `_categorized-v2`), no note/description
 
-4. If the eligible list has fewer than 100 items, **fill the remaining slots** with bookmarks that have the oldest `lastUpdate` (least recently processed).
+4. Collect the eligible list — **at most 100 bookmarks**.
+
+5. If the eligible list has <100 items, **fill the remaining slots** with bookmarks that DO have the `_categorized-v2` tag, sorted by oldest `lastUpdate` first (least recently processed). These are re-processing candidates — the taxonomy may have evolved since they were first categorized.
 
 ### Phase 3 — Process Each Bookmark
 
@@ -176,9 +177,11 @@ source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <
 
 **Update via API:**
 ```bash
-# Tags are passed as a JSON array
-source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <raindrop_id> '{"tags": ["tag1", "tag2"]}'
+# Tags are passed as a JSON array — always include _categorized-v2
+source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <raindrop_id> '{"tags": ["_categorized-v2", "tag1", "tag2"]}'
 ```
+
+The `_categorized-v2` tag is always added to every processed bookmark, alongside any inferred tags.
 
 ### Phase 4 — Score Output Quality
 
@@ -208,7 +211,7 @@ After all bookmarks are processed, roll up scores for each **root collection** (
 
 #### Global (entire run)
 
-Roll up all per-raindrop and per-collection scores into a single run summary. Tracked in `~/.hermes/cache/raindrop-quality.json` for trend analysis.
+Roll up all per-raindrop and per-collection scores into a single run summary. Written to `~/.hermes/cache/raindrop-quality.json` at the end of each run and read back at the start of the next run for trend comparison. No other persistence mechanism is needed.
 
 | Score | What it measures |
 |-------|-----------------|
@@ -346,6 +349,8 @@ The skill includes a reflection step where it considers:
 6. **Description vs Note** — The `description` field is short (Raindrop auto-summary or user excerpt); `note` is the long-form field. This skill consolidates into `note` and empties `description`.
 7. **CSV encoding** — Raindrop titles/URLs can contain commas. Use proper CSV quoting (Python's `csv` module handles this) to avoid parsing errors.
 8. **Self-improvement doesn't mean inventing data** — If a URL is unreachable, report it. Do not synthesize page content to write a Note. Skip that bookmark and note the failure.
+9. **Tracking tag `_categorized-v2`** — This tag is added to every processed bookmark. It should be excluded from relevance checks (it's meta-data, not a real tag). When checking if a bookmark has "no tags", ignore `_categorized-v2`. When inferring tags, never suggest removing `_categorized-v2`.
+10. **Quality scores are file-only** — Scores persist in `~/.hermes/cache/raindrop-quality.json`. No supermemory dependency. The JSON file must be manually deleted to reset trend data.
 
 ## Verification Checklist
 
