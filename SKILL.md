@@ -112,7 +112,9 @@ source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <
 - Otherwise, use the Note (from 3a) to infer a suitable Collection from the existing tree.
 - If there's no Note yet (shouldn't happen — 3a runs first), write one via 3a first.
 - **Match logic**: scan the Collection tree. Look for semantic overlap between the Note/Description content and the Collection title/description. Prefer the most specific match (deepest in the tree).
-- If **no suitable match** exists in the collection tree: save the bookmark to a **persistent todo list** (see "Pending Collections & Tags" below) and mark it as `needs_new_collection: true`.
+- **Breadth heuristic**: collections with >25 bookmarks are candidates for sub-collection splitting. When possible, prefer a smaller, more specific sub-collection over a large parent collection. Ideal range is 5–25 bookmarks per collection.
+- If **no suitable match** exists in the collection tree: flag the bookmark for a new collection via a kanban card (Phase 5).
+- If the best match is a collection with >100 bookmarks and a more specific sub-collection could be created: create a kanban card suggesting the sub-collection split.
 
 **Update via API:**
 ```bash
@@ -125,7 +127,7 @@ source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <
 - If Tags are empty: infer one or more Tags from the Note and Description.
 - **Match logic**: scan the existing Tag list. Tag names are flat (no hierarchy). Prefer 1–3 focused tags over 6+ scattershot ones.
 - If **no suitable Tag** exists: assign a new tag name anyway — Raindrop creates tags implicitly on first assignment. The new tag will be surfaced for your review in Phase 5.
-- If the taxonomy audit (Phase 7) flags two tags as synonyms, defer the merge to the user review CSV in Phase 5/6 — never merge or remove tags without the user deciding.
+- If the taxonomy audit (Phase 7) flags two tags as synonyms, defer the merge to the kanban board (Phase 5) — never merge or remove tags without the user deciding.
 
 **Update via API:**
 ```bash
@@ -146,57 +148,86 @@ source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <
 
 Store the before/after scores in `~/.hermes/cache/raindrop-quality.json` for long-run trend analysis.
 
-### Phase 5 — Surface Pending Collections, Tags & Merges for User Review
+### Phase 5 — Create Kanban Cards for Pending Decisions
 
-If Phase 3 produced any bookmarks needing new Collections, or if Phase 7 flagged tags for merging:
+Instead of a CSV, create kanban cards in the `raindrop-audit` board. Each issue gets its own card with clear context so the user can review at their own pace. All cards go into a `pending-review` column.
 
-1. Build a CSV file at `.hermes/cache/raindrop-pending.csv` with these columns:
-   - `raindrop_name` — the bookmark title
-   - `url` — the bookmark URL
-   - `description` — the Note/Description content (for context)
-   - `C-<suggested_collection>` — one column per unique suggested Collection title, prefixed with `C-`
-   - `T-<suggested_tag>` — one column per unique suggested Tag name, prefixed with `T-`
-   - `T-merge:<source>→<target>` — one column per suggested tag merge (e.g. `T-merge:dev->development`)
+**What gets a card:**
+- Each bookmark needing a **new Collection** → one card per bookmark
+- Each **tag merge** suggestion (synonyms found) → one card per merge
+- Each **taxonomy issue** from Phase 7 audit → one card per issue
+- Each bookmark that was assigned a **new tag** (created implicitly) → one summary card listing all new tags created this run
 
-2. The CSV cells are empty — the user fills in `yes` / `no` / renames the column header.
+**Card body format:**
+```
+Title: "collection: <raindrop title>"
+Body:
+  URL: <url>
+  Suggested: <collection name> under <parent>
+  Reason: <semantic match explanation>
 
-3. Present the CSV to the user and ask them to fill it out.
+Title: "merge: <source> → <target>"
+Body:
+  Source tag: <source> (N bookmarks)
+  Target tag: <target> (N bookmarks)
+  Why: <reason these are synonyms>
 
-### Phase 6 — Create Approved Collections & Tags
+Title: "audit: <issue description>"
+Body:
+  Collection/Tag: <name>
+  Issue: <description>
+  Suggestion: <proposed action>
+```
 
-1. Read back the completed CSV.
-2. For each row where the user approved a `C-<name>` column: create the Collection via API:
-   ```bash
-   source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py create-collection '{"title": "collection_name", "parent": {"$id": <parent_id_or_null>}}'
-   ```
-3. For each row where the user approved a `T-<name>` column: tags are created implicitly when first assigned to a bookmark. Assign the tag to the bookmark.
-4. For each row where the user approved a `T-merge:<source>→<target>` column: reassign all bookmarks with the source tag to the target tag, then remove the source tag.
-5. Re-process the bookmarks from the CSV now that the new Collection/Tag exists.
-6. **Delete the CSV file** only when all rows are processed.
+Each card goes to the `pending-review` list on the `raindrop-audit` board.
+
+### Phase 6 — Execute Approved Kanban Cards
+
+1. The user reviews the `raindrop-audit` board and either **completes** cards (approves) or **blocks** them (rejects/changes needed).
+2. For each completed card:
+   - **New collection**: create via API using the python helper
+   - **Tag merge**: run `python3 scripts/raindrop_api.py merge-tags <source> <target>`
+   - **Delete collection**: run `python3 scripts/raindrop_api.py delete-collection <id>`
+   - **New tags**: already created implicitly on assignment in Phase 3c — no action needed
+3. Re-process the bookmarks now that new Collections/Tags exist.
+4. Archive completed cards with a summary of what was done.
 
 ### Phase 7 — Evaluate and Improve the Taxonomy
 
-After all bookmarks are processed, run an **audit pass** on the full Collection tree and Tag list:
+After all bookmarks are processed, run an **audit pass** on the full Collection tree and Tag list. Create kanban cards for each issue found (same Phase 5 format, same `raindrop-audit` board):
 
-**Collection audit:**
-- Are any Collections empty (0 bookmarks)? Suggest archiving or deleting.
-- Are any Collections redundant (same theme as another)? Suggest merging.
-- Are any Collections names ambiguous or unclear? Suggest renaming.
-- Is any Collection better suited under a different parent? Suggest reparenting.
+**Collection audit triggers:**
+- **Too broad** — a collection exceeds 25 bookmarks AND groups conceptually separate things. E.g. `NixOS` at 257 bookmarks is a candidate for sub-collections.
+- **Empty** — a collection has 0 bookmarks and no recent activity.
+- **Redundant** — two collections have overlapping themes.
+- **Ambiguous name** — the title doesn't clearly describe its contents.
+- **Wrong parent** — a collection fits better under a different parent.
 
-**Tag audit:**
-- Are any tags unused (count=0)? Flag as potentially orphaned.
-- Are any tags synonyms (e.g. "dev", "development", "programming")? Flag for possible merge.
-- Are any tags applied to fewer than 3 bookmarks? Flag as potentially too niche.
-- Are any tags misspelled or inconsistently cased? Flag for standardisation.
+**Tag audit triggers:**
+- **Synonym pair** — two tags with identical meaning (e.g. "nix" and "nixos").
+- **Orphaned** — tag has 0 bookmarks attached.
+- **Underused** — tag applied to fewer than 3 bookmarks.
+- **Inconsistent casing** — tags that are clearly the same concept but cased differently.
 
-**Improvement actions** (presented for user review in Phase 5/6):
+**Collection breadth heuristic:**
+When assigning a bookmark to a collection, use this signal:
+```
+if collection.count > 25:
+    prefer  a  more  specific  sub-collection  or  flag  for  audit
+  
+  ideal  range: 5-25 bookmarks per collection
+```
+If no suitable sub-collection exists and the parent is oversized, create a kanban card suggesting one.
+
+**Improvement actions** (all gated through kanban cards):
 ```bash
-# Delete an empty or redundant collection (only after user approval)
+# Only after user approves the kanban card:
 source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py delete-collection <collection_id>
+source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py create-collection '{"title": "...", "parent": {"$id": ...}}'
+source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py merge-tags <source> <target>
 ```
 
-Tags are never deleted or merged without user approval via the Phase 5/6 CSV review process.
+Tags are never deleted or merged without explicit user approval via the kanban board.
 
 Record the audit findings in `~/.hermes/cache/raindrop-audit-<date>.md`.
 
@@ -258,7 +289,7 @@ The skill includes a reflection step where it considers:
 - [ ] Collections assigned from existing tree (or flagged as new)
 - [ ] Tags assigned (or flagged as new)
 - [ ] Before/after scores recorded in quality cache
-- [ ] Pending CSV created and presented to user if needed
+- [ ] Kanban cards created for pending decisions (Phase 5)
 - [ ] Approved Collections/Tags created via API
 - [ ] Taxonomy audit completed and results recorded
 - [ ] `.env` not committed to git (add `.env` to `.gitignore`)
