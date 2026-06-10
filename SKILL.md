@@ -117,22 +117,19 @@ Build two data structures (keep in working memory or write to `.hermes/cache/rai
 
 ### Phase 2 — Select Bookmarks to Process
 
-1. Fetch all bookmarks across all collections (paginated, up to `limit=100` per page):
-   ```bash
-   # Unsorted (collection 0), 50 per page
-   source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py raindrops 0 50
-   ```
-   (Use `collection=0` for "Unsorted", or any collection ID for a specific one.)
+1. Scan all non-empty collections for eligible bookmarks. The Raindrop API limits pagination to **50 items per page** (`perpage=50` — using a higher value is silently capped). Paginate through every page until all items are seen or the batch is full. Use sequential requests with ~200ms pacing to avoid rate limiting (max ~120 req/min).
 
-2. **Tracking tag**: every bookmark processed by this skill gets a tracking tag `_categorized-v2`. A bookmark that has this tag has been through the pipeline before and is **not eligible** for the new pool (it may still qualify as a filler — see below).
+2. **Unsorted collection**: Raindrop marks unsorted bookmarks with `collection.$id: -1` (not 0). The special collection ID `0` is used by the API endpoint `/raindrops/0` to fetch unsorted items, but the items themselves have `$id: -1`. Check for both when determining if a bookmark needs a collection.
 
-3. A bookmark is **eligible for the new pool** if **all** of these are true:
+3. **Tracking tag**: every fully-processed bookmark gets a tracking tag `_categorized-v2`. A bookmark with this tag has been through the full pipeline (note + collection + tags) and is **not eligible** for the new pool. The tag is applied **only after all three sub-phases (3a, 3b, 3c) complete successfully** — never before. A partial update (e.g. notes + tags but no collection) should NOT receive the tracking tag.
+
+4. A bookmark is **eligible for the new pool** if **all** of these are true:
    - It **does not** have the `_categorized-v2` tag
-   - AND one or more of: no Collection (or Unsorted), tags empty (ignoring `_categorized-v2`), no note/description
+   - AND one or more of: `collection.$id` is `-1` (Unsorted), tags empty (ignoring `_categorized-v2`), no note/description
 
-4. Collect the new pool — up to 100 bookmarks.
+5. Collect the new pool — up to 100 bookmarks.
 
-5. **Filler queue**: if the new pool has fewer than 100 items, fill the remaining slots with bookmarks that **do** have the `_categorized-v2` tag, selected in this order:
+6. **Filler queue**: if the new pool has fewer than 100 items, fill the remaining slots with bookmarks that **do** have the `_categorized-v2` tag, selected in this order:
    - **Pass 1**: bookmarks with `lastUpdate` older than 24 hours, sorted oldest first. This catches stale categorizations that would benefit from an improved pipeline, while preventing the same bookmark from cycling every run.
    - **Pass 2**: if still under 100, include bookmarks with `lastUpdate` within the last 24 hours, sorted oldest first. This ensures full batches even on small libraries.
    - **Skip any** bookmark already in the new pool to avoid duplicates.
@@ -149,7 +146,7 @@ For each bookmark in the list, apply the following three sub-processes **in orde
 - **If `description` looks handwritten** (multi-sentence, personal voice, URL-specific commentary): preserve it verbatim as the core of the new note. You may add to and reword it as long as no substantive content is lost.
 - **If `description` looks AI-generated** (Raindrop's auto-summary, generic boilerplate): discard it.
 - **If `note` already has content**: merge handwritten description into the note, preserving both meaningfully. Prefer the note as the canonical location.
-- **If both are empty**: write a brand-new note based on the bookmark's URL content (fetch the page to summarise, or infer from the URL/title).
+- **If both are empty**: write a brand-new note based on the bookmark's URL content. Fetch the page to summarise its content and purpose. The URL content is also used for collection and tag matching in 3b and 3c — you always have permission to fetch and inspect the URL for categorization purposes, not just for note summarization.
 - **Final result**: `note` gets the clean unified text; `description` is set to empty string.
 
 **Update via API:**
@@ -182,11 +179,13 @@ source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <
 
 **Update via API:**
 ```bash
-# Tags are passed as a JSON array — always include _categorized-v2
-source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <raindrop_id> '{"tags": ["_categorized-v2", "tag1", "tag2"]}'
+# Tags are passed as a JSON array — does NOT include _categorized-v2 here
+source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_api.py update <raindrop_id> '{"tags": ["tag1", "tag2"]}'
 ```
 
-The `_categorized-v2` tag is always added to every processed bookmark, alongside any inferred tags.
+#### 3d. Apply Finalization Tag
+
+After **all three sub-phases (3a, 3b, 3c) have completed successfully**, apply the `_categorized-v2` tracking tag. This ensures the bookmark is only marked as fully processed when it has a note, collection, AND tags. Partial runs (e.g. note+tags only) do not receive the tag and remain eligible for the new pool in future runs.
 
 ### Phase 4 — Score Output Quality
 
@@ -374,17 +373,21 @@ The skill includes a reflection step where it considers:
 8. **Self-improvement doesn't mean inventing data** — If a URL is unreachable, report it. Do not synthesize page content to write a Note. Skip that bookmark and note the failure.
 9. **Tracking tag `_categorized-v2`** — This tag is added to every processed bookmark. It should be excluded from relevance checks (it's meta-data, not a real tag). When checking if a bookmark has "no tags", ignore `_categorized-v2`. When inferring tags, never suggest removing `_categorized-v2`.
 10. **Quality scores are file-only** — Scores persist in `~/.hermes/cache/raindrop-quality.json`. No supermemory dependency. The JSON file must be manually deleted to reset trend data.
+11. **`perpage` cap is 50** — The Raindrop API silently caps `perpage` at 50. Using 200 returns only 50 items, which causes pagination loops to exit early and miss bookmarks. Always use `perpage=50` and paginate properly.
+12. **Unsorted uses `$id: -1`, not 0** — The API endpoint `/raindrops/0` fetches unsorted items, but those items have `collection.$id: -1` in their response. Check for both when filtering.
 
 ## Verification Checklist
 
 - [ ] `RAINDROP_TOKEN` is set and `python3 scripts/raindrop_api.py user` returns your info
 - [ ] Collections fetched and tree built correctly
 - [ ] Tags fetched with usage counts
-- [ ] Eligible bookmarks identified (unsorted + untagged + no note)
+- [ ] Eligible bookmarks identified perpage=50 with proper pagination
+- [ ] URL content fetched and used for categorization (notes, collections, tags)
 - [ ] At most 100 bookmarks selected; remaining slots filled by least-recently-processed
 - [ ] Description consolidated into Note; description cleared
-- [ ] Collections assigned from existing tree (or flagged as new)
-- [ ] Tags assigned (or flagged as new)
+- [ ] Collections assigned from existing tree (or flagged via kanban)
+- [ ] Tags assigned (without _categorized-v2)
+- [ ] Finalization tag _categorized-v2 applied only after all 3 phases succeed
 - [ ] Before/after scores recorded in quality cache
 - [ ] Kanban cards created for pending decisions (Phase 5)
 - [ ] Approved Collections/Tags created via API
