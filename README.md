@@ -1,5 +1,7 @@
 # Raindrop Skills
 
+**⚠️ These skills require [Hermes Agent](https://hermes-agent.nousresearch.com) — they depend on its kanban system for user review workflows and its cron scheduler for recurring runs. They are not standalone tools.**
+
 Hermes Agent skills for managing a [Raindrop.io](https://raindrop.io) bookmark library — categorization, linting, and quality assurance.
 
 ## Skills
