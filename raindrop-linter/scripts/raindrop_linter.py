@@ -398,7 +398,7 @@ def main():
     
     if args.action in ("lint", "malformed"):
         print(f"\nChecking for malformed URLs...", file=sys.stderr)
-        _, _, malformed = build_duplicates_report(drops)["malformed"]
+        malformed = build_duplicates_report(drops)["malformed"]
         if args.json:
             malformed_data = [{"id": d.get("_id"), "title": d.get("title"), "url": url, "reason": reason}
                               for d, reason, url in malformed]
@@ -421,7 +421,7 @@ def main():
         unchecked = []
         for d in drops:
             did = d.get("_id", 0)
-            if did > cursor or did in checked:
+            if did <= cursor or did in checked:
                 continue
             unchecked.append(d)
         
