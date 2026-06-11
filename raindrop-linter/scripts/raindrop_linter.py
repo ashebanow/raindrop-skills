@@ -342,8 +342,8 @@ def main():
     parser.add_argument("action", nargs="?", default="lint",
                         choices=["lint", "dead", "dups", "malformed", "state"],
                         help="Action to perform")
-    parser.add_argument("--limit", type=int, default=20,
-                        help="Max dead URLs to check per run (default: 20)")
+    parser.add_argument("--limit", type=int, default=100,
+                        help="Max dead URLs to check per run (default: 100)")
     parser.add_argument("--json", action="store_true",
                         help="Output as JSON (for kanban card creation)")
     args = parser.parse_args()

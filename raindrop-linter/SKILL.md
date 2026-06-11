@@ -71,10 +71,10 @@ Scans all bookmarks for structurally invalid URLs.
 ### `dead` — Dead URL batch scan
 
 ```bash
-source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_linter.py dead --limit 20
+source .env && export RAINDROP_TOKEN && python3 scripts/raindrop_linter.py dead --limit 100
 ```
 
-Checks N bookmarks (oldest `lastUpdate` first) via HTTP HEAD. Remembers position in `~/.hermes/cache/raindrop-lint-state.json` so each run picks up where the last left off.
+Checks N bookmarks (default 100, oldest `lastUpdate` first) via HTTP HEAD. Remembers position in `~/.hermes/cache/raindrop-lint-state.json` so each run picks up where the last left off.
 
 ### `state` — Show linter state
 
