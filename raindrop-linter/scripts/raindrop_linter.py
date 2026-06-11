@@ -157,33 +157,38 @@ def is_malformed_url(url: str) -> bool:
 # ── Dead URL check (HEAD) ────────────────────────────────────────────
 
 def check_url_live(url: str, timeout: float = 8.0) -> tuple:
-    """HTTP HEAD check. Returns (live: bool, status: int or None, error: str or None)."""
+    """Check if a URL is reachable. Tries HEAD first; falls back to GET on 405 (Method Not Allowed).
+    Returns (live: bool, status: int or None, error: str or None)."""
     import urllib.request
-    for attempt in range(2):
-        try:
-            req = urllib.request.Request(url, method="HEAD")
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return True, resp.status, None
-        except urllib.error.HTTPError as e:
-            status = e.code
-            if status < 500:
-                return False, status, f"HTTP {status}"
-            # 5xx — retry once
-            if attempt == 0:
-                time.sleep(1)
-                continue
-            return False, status, f"HTTP {status} (after retry)"
-        except urllib.error.URLError as e:
-            return False, None, str(e.reason)
-        except (ConnectionRefusedError, ConnectionResetError) as e:
-            return False, None, str(e)
-        except socket.timeout:
-            if attempt == 0:
-                time.sleep(1)
-                continue
-            return False, None, "timeout"
-        except Exception as e:
-            return False, None, str(e)
+    methods = ["HEAD", "GET"]
+    for method in methods:
+        for attempt in range(2):
+            try:
+                req = urllib.request.Request(url, method=method)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return True, resp.status, None
+            except urllib.error.HTTPError as e:
+                status = e.code
+                if status == 405 and method == "HEAD":
+                    break  # server doesn't support HEAD, try GET
+                if status < 500:
+                    return False, status, f"HTTP {status}"
+                # 5xx — retry once within this method
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                return False, status, f"HTTP {status} (after retry)"
+            except urllib.error.URLError as e:
+                return False, None, str(e.reason)
+            except (ConnectionRefusedError, ConnectionResetError) as e:
+                return False, None, str(e)
+            except socket.timeout:
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                return False, None, "timeout"
+            except Exception as e:
+                return False, None, str(e)
     return False, None, "max retries"
 
 
