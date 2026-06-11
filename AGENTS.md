@@ -17,6 +17,11 @@ cp -r raindrop-categorize ~/.hermes/skills/raindrop-categorize
 cp -r raindrop-linter ~/.hermes/skills/raindrop-linter
 ```
 
+## Cron Jobs
+
+- **raindrop-categorize-daily** — twice daily (7am/7pm), categorizes bookmarks, notifies Discord
+- **raindrop-linter-weekly** — Mondays 10am, checks duplicates + dead URLs, silent if nothing found
+
 ## Structure
 
 ```

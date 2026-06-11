@@ -19,3 +19,7 @@ Primary Raindrop bookmark categorization pipeline. See `SKILL.md` for the full p
 - User mentions running the raindrop pipeline
 - User asks about Raindrop API quirks or collection/tag management
 - User asks to review the categorization quality or taxonomy health
+
+## Cron Jobs
+
+- **raindrop-categorize-daily** (`0 7,19 * * *`) — runs twice daily, categorizes eligible bookmarks, creates kanban cards for new collections/tags. Delivers summary to Discord (origin).

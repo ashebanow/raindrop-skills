@@ -10,6 +10,10 @@ Periodic linter for the Raindrop.io bookmark library. See `SKILL.md` for the ful
 - Duplicate survivor selected by scoring on completeness + _categorized-v2 tag
 - Requires Hermes kanban system for review cards
 
+## Cron Jobs
+
+- **raindrop-linter-weekly** (`0 10 * * 1`) — runs every Monday at 10am. Checks duplicates, 100 dead URLs. Only notifies Discord if new issues are found (otherwise silent).
+
 ## When to Load This Skill
 
 - User asks about bookmark duplicates or cleanup
