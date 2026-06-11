@@ -1,30 +1,32 @@
-# Raindrop Skills — Monorepo
+# Raindrop Skills Monorepo
 
-This repo contains Hermes skills for working with Raindrop.io:
+This repo contains Hermes Agent skills for managing a [Raindrop.io](https://raindrop.io) bookmark library.
 
-- `raindrop-categorize/` — Auto-categorize bookmarks (Collection, Tags, Notes)
-- `raindrop-linter/` — Find duplicates, near-duplicates, malformed URLs, and dead links
+## Skills
 
-## Development Workflow
+- **raindrop-categorize/** — Auto-categorize bookmarks: assign Collections, Tags, and Notes via the Raindrop REST API. Self-improving pipeline that scores output quality and flags taxonomy issues.
+- **raindrop-linter/** — Periodic library linter: finds duplicate URLs, near-duplicates, malformed URLs, and dead links. Creates kanban cards for review.
+
+## Usage
+
+Each skill has its own `SKILL.md` with full instructions. Skills are installed to `~/.hermes/skills/` and loaded by name.
 
 ```bash
-# Install/update a skill locally
+# Install/update a skill
+cp -r raindrop-categorize ~/.hermes/skills/raindrop-categorize
 cp -r raindrop-linter ~/.hermes/skills/raindrop-linter
-
-# Or symlink for live development (if skills dir supports it)
-ln -s "$(pwd)/raindrop-linter" ~/.hermes/skills/raindrop-linter
 ```
 
 ## Structure
 
 ```
 raindrop-skills/
-├── .env                          # Shared env vars (RAINDROP_TOKEN)
+├── .env                     # RAINDROP_TOKEN (gitignored)
 ├── .gitignore
-├── AGENTS.md                     # This file
+├── AGENTS.md                # This file
 ├── raindrop-categorize/
 │   ├── SKILL.md
-│   ├── AGENTS.md
+│   ├── ORIGINAL_PROMPT.md   # Original task spec (historical)
 │   └── scripts/
 │       └── raindrop_api.py
 └── raindrop-linter/
