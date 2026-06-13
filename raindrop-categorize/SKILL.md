@@ -333,16 +333,61 @@ The `raindrop-quality.json` file accumulates scores across runs. After each run,
 - **Current vs Historical** (is quality trending up or down?)
 - If quality is **trending down** for 2+ consecutive runs, flag the taxonomy audit results as a priority action.
 
-### Recurring Run via Cron
+### Recurring Run via Cron (Recommended: `no_agent` mode)
 
-To run this weekly:
+The cron path runs a deterministic Python orchestrator instead of an LLM agent. The agent-driven path is unreliable for scheduled runs because the Hermes scheduler's response-capture and idle-timeout machinery raise `RuntimeError` or `TimeoutError` whenever the LLM returns a result that the framework's heuristics classify as "failed" — even when the actual summary was delivered successfully. The orchestrator eliminates all three failure modes (broken pipe on response capture, idle timeout, wrapped `RuntimeError` from `failed=True`).
+
+**Setup:**
+
+1. The orchestrator wrapper lives at `~/.hermes/scripts/raindrop_categorize_cron.py` (it delegates to `scripts/cron_run.py` in this skill's directory). If the wrapper is missing, copy it from this skill or recreate it as a `runpy.run_path(...)` shim.
+2. Create the job:
 
 ```bash
 hermes cron create \
-  --schedule "0 9 * * 1" \
-  --prompt "Run the raindrop-categorize skill on all eligible bookmarks (collections=0, tags=[], no note). Read scores from cache and report changes." \
+  --schedule "0 7,19 * * *" \
+  --name "raindrop-categorize-daily" \
+  --no-agent \
+  --script "raindrop_categorize_cron.py" \
+  --prompt "Deterministic orchestrator — script stdout is delivered verbatim." \
   --skills raindrop-categorize
 ```
+
+**What the orchestrator does (no LLM involved):**
+
+| Phase | What runs |
+|---|---|
+| Prune | Drops audit-log entries older than 7 days |
+| 1+2 | Runs `scan-batch.py` (collections, tags, eligible-pool scan) |
+| 3 | Runs `process-batch.py` (notes, tags, `_categorized-v2`) |
+| 4 | Reads latest quality record from `~/.hermes/cache/raindrop-quality.json` |
+| 5 | Reports no-match backlog from `~/.hermes/cache/raindrop-no-match.json` |
+| 7 | Reports taxonomy flags (oversized collections) from the latest quality record |
+
+**What the orchestrator does NOT do (intentionally):**
+
+- **Phase 5 kanban-card creation** — the LLM was creating triage cards for new collections/tags, but that's a judgment call best made in an interactive session. The orchestrator reports the counts so a human can decide.
+- **Phase 6 approval** — strictly user-driven via the kanban board.
+- **Phase 7 taxonomy-audit execution** — the orchestrator only reads existing flags from the quality cache; running a fresh audit is left for an interactive session.
+
+**Output format (delivered verbatim to Discord):**
+
+```
+## Raindrop Categorize — Run `20260612-235823`
+**Elapsed:** 332s · collections: 238 · tags: 1383
+
+**Pipeline:**
+- Prune audit: 0 old entries removed
+- Scan: 3327 eligible, batch 100
+- Process: ✅ 100 ok, 0 failed
+- Quality: avg 7.5/10 (batch 100, success 100%)
+
+**Trend:** 06-10T02:43 8.0 → 06-10T22:31 8.0 → 06-10T19:00 7.7 → 06-11T22:15 7.5 → 06-11T22:17 7.5
+**No-match backlog:** 14 · **Taxonomy flags:** none flagged
+```
+
+The wrapper is well under 1 KB, leaving comfortable headroom for the framework's `Cronjob Response: …\n-------------\n\n…` wrapping within Discord's 2000-char per-message limit.
+
+**For interactive (non-cron) runs** — e.g. one-off categorization passes, debugging, or Phase 5/7 work — invoke the skill directly as a normal LLM conversation. The cron path is intentionally different from the interactive path.
 
 ## Self-Improvement Logic
 
