@@ -23,3 +23,8 @@ Primary Raindrop bookmark categorization pipeline. See `SKILL.md` for the full p
 ## Cron Jobs
 
 - **raindrop-categorize-daily** (`0 7,19 * * *`) — runs twice daily, categorizes eligible bookmarks, creates kanban cards for new collections/tags. Delivers summary to Discord (origin).
+
+## Notes for Future Agents
+
+- **The skill has been assigning collections correctly over multiple runs** (verified by the user). The `references/collection-keyword-mapping.md` is a **fallback** keyword map for when other collection-assignment methods don't produce a match — not evidence that the script never did collection assignment. Earlier agents should not infer "never worked" from the line *"it was never designed to"* in that file; the original author of that comment has acknowledged the wording is unclear.
+- **The audit log is not a complete record of collection writes.** Low counts in `fields_changed` do not mean the system has been failing — the script was historically doing the work in ways that weren't all logged in that field. Always cross-check against Discord delivery summaries (the LLM-driven cron's messages confirmed successful collection assignments) before drawing conclusions from a small `fields_changed` count alone.
