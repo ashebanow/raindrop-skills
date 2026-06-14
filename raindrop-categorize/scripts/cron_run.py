@@ -138,7 +138,16 @@ def parse_scan_output(stdout: str) -> dict:
 
 
 def parse_process_output(stdout: str) -> tuple[int, int]:
+    """Parse the process-batch.py summary line.
+
+    Returns (tagged, deferred). The current process-batch.py prints
+    "N tagged, M deferred" (preferred), but we fall back to the older
+    "N updated, M failed" format for backwards compatibility.
+    """
     for line in stdout.splitlines():
+        m = re.search(r"(\d+)\s+tagged,\s+(\d+)\s+deferred", line)
+        if m:
+            return int(m.group(1)), int(m.group(2))
         m = re.search(r"(\d+) updated, (\d+) failed", line)
         if m:
             return int(m.group(1)), int(m.group(2))
@@ -334,12 +343,16 @@ def main() -> int:
     elapsed = int(time.time() - t0)
 
     # --- Format pipeline line ---
+    # process-batch.py now reports "tagged" (3d applied) vs "deferred"
+    # (3d skipped — bookmark will be re-scanned next run). "Deferred"
+    # is not a failure, so we only flag it as a warning if there were
+    # also script-level failures.
     if proc_rc != 0:
-        proc_status = f"⚠️ exited {proc_rc} ({ok} ok, {fail} failed)"
+        proc_status = f"⚠️ exited {proc_rc} ({ok} tagged, {fail} deferred)"
     elif fail > 0:
-        proc_status = f"⚠️ {ok} ok, {fail} failed"
+        proc_status = f"✅ {ok} tagged, {fail} deferred (will retry)"
     else:
-        proc_status = f"✅ {ok} ok"
+        proc_status = f"✅ {ok} tagged"
     pipeline = (
         f"prune {removed} → "
         f"scan {scan_info['eligible']} eligible, batch {scan_info['batch']} → "
@@ -359,11 +372,11 @@ def main() -> int:
     # --- Format action items ---
     items: list[str] = []
 
-    if proc_rc != 0 or fail > 0:
-        # Failures are always an action item
+    if proc_rc != 0:
+        # Script-level crash (non-zero exit) is a real failure
         tail = (proc_err or proc_out)[-400:].strip()
         items.append(
-            f"⚠️ **Process failures ({fail}):** check audit log for details"
+            f"⚠️ **Process script crashed (exit {proc_rc}):** check audit log for details"
             + (f" — tail: `{tail[:200]}`" if tail else "")
         )
 
