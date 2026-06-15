@@ -11,8 +11,6 @@ State persisted to ~/.hermes/cache/raindrop-lint-state.json
 """
 
 import json, os, sys, time, re, socket
-import urllib.request
-import urllib.error
 from collections import defaultdict
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from datetime import datetime, timezone
@@ -20,46 +18,11 @@ from datetime import datetime, timezone
 HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
 CACHE_DIR = os.path.join(HERMES_HOME, "cache")
 STATE_FILE = os.path.join(CACHE_DIR, "raindrop-lint-state.json")
-API_BASE = "https://api.raindrop.io/rest/v1"
 
-# ── API helpers ──────────────────────────────────────────────────────
-
-def api_get(path, params=None):
-    import urllib.request
-    token = os.environ.get("RAINDROP_TOKEN", "")
-    if not token:
-        raise RuntimeError("RAINDROP_TOKEN not set")
-    url = f"{API_BASE}{path}"
-    if params:
-        qs = "&".join(f"{k}={urllib.request.quote(str(v), safe='')}" for k, v in params.items())
-        url = f"{url}?{qs}"
-    req = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {token}",
-        "User-Agent": "raindrop-linter/1.0",
-    })
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode())
-
-
-def fetch_all_raindrops():
-    """Fetch ALL bookmarks (paginated, perpage=50). Returns list of raindrops."""
-    all_drops = []
-    page = 0
-    perpage = 50
-    total_seen = 0
-    while True:
-        data = api_get("/raindrops/0", {"page": page, "perpage": perpage})
-        items = data.get("items", [])
-        if not items:
-            break
-        all_drops.extend(items)
-        total_seen += len(items)
-        count = data.get("count", 0)
-        if total_seen >= count:
-            break
-        page += 1
-        time.sleep(0.2)  # rate limit pacing
-    return all_drops
+# ── Shared Raindrop utilities ────────────────────────────────────────
+_repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(_repo_root, "shared"))
+from raindrop_common import api_get, fetch_all_raindrops, TRACKING_TAG
 
 
 # ── URL normalization ────────────────────────────────────────────────
@@ -214,7 +177,7 @@ def score_raindrop(drop: dict) -> int:
         score += 2
     
     # _categorized-v2 is a strong signal
-    if "_categorized-v2" in tags:
+    if TRACKING_TAG in tags:
         score += 3
     
     # Has description (but we consolidate it — having one shows prior curation)

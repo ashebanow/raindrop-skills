@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "created": "2026-06-14T00:00:00Z",
+  "last_updated": "2026-06-14T00:00:00Z",
+
+  "collection_keywords": [
+    {
+      "id": "coll-nixos",
+      "keywords": ["nix", "nixos", "nixpkgs", "home-manager", "nix-darwin"],
+      "collection_id": 70857518,
+      "collection_title": "NixOS",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-programming",
+      "keywords": ["programming", "code", "git", "github", "golang", "rust", "python", "javascript"],
+      "collection_id": 70857519,
+      "collection_title": "Programming",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-homelab",
+      "keywords": ["homelab", "self-host", "proxmox", "docker", "kubernetes", "k8s"],
+      "collection_id": 70857516,
+      "collection_title": "Homelab & Self-Hosting",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-food-drink",
+      "keywords": ["recipe", "cooking", "food", "kitchen", "cuisine"],
+      "collection_id": 70857521,
+      "collection_title": "Food & Drink",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-health",
+      "keywords": ["health", "fitness", "exercise", "nutrition", "doctor", "medical", "wellness"],
+      "collection_id": 70857523,
+      "collection_title": "Health & Wellness",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-travel",
+      "keywords": ["travel", "hotel", "flight", "vacation", "trip", "destination"],
+      "collection_id": 41357283,
+      "collection_title": "Travel",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-firmware-os",
+      "keywords": ["linux", "os", "firmware", "openwrt", "gl-inet", "router"],
+      "collection_id": 70857517,
+      "collection_title": "Firmware & OS",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-home-living",
+      "keywords": ["home", "living", "house", "garden", "furniture", "decor", "renovation"],
+      "collection_id": 70857525,
+      "collection_title": "Home & Living",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-shopping",
+      "keywords": ["shopping", "deal", "buy", "amazon", "product"],
+      "collection_id": 70857522,
+      "collection_title": "Shopping & Lifestyle",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-desktop-ui",
+      "keywords": ["desktop", "ui", "gtk", "hyprland", "sway", "i3", "wayland", "ricing", "theme", "dotfile"],
+      "collection_id": 70861622,
+      "collection_title": "Desktop & UI",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-macos",
+      "keywords": ["macos", "mac", "apple", "homebrew", "brew"],
+      "collection_id": 70864186,
+      "collection_title": "macOS",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-security",
+      "keywords": ["security", "privacy", "vpn", "encrypt", "password", "firewall", "auth"],
+      "collection_id": 70864189,
+      "collection_title": "Security & Privacy",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-ai",
+      "keywords": ["ai", "llm", "gpt", "claude", "openai", "machine.learning", "ml"],
+      "collection_id": 70864187,
+      "collection_title": "AI",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-music",
+      "keywords": ["music", "song", "spotify", "band", "album", "audio", "podcast"],
+      "collection_id": 70864185,
+      "collection_title": "Music",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-frontend",
+      "keywords": ["frontend", "css", "tailwind", "react", "vue", "web.design", "svelte"],
+      "collection_id": 70864184,
+      "collection_title": "Frontend",
+      "weight": 1.0
+    },
+    {
+      "id": "coll-database",
+      "keywords": ["database", "sql", "postgres", "mysql", "sqlite", "redis", "mongo"],
+      "collection_id": 70859700,
+      "collection_title": "Database",
+      "weight": 1.0
+    }
+  ],
+
+  "tag_keywords": {
+    "linux": ["linux", "linux kernel"],
+    "nixos": ["nixos"],
+    "nix": ["nix", "nixpkgs", "nix-darwin", "home-manager"],
+    "homelab": ["homelab", "self-host", "self hosted", "home server"],
+    "docker": ["docker", "docker-compose", "docker compose"],
+    "kubernetes": ["kubernetes", "k8s", "k3s"],
+    "security": ["security", "cybersecurity", "vpn", "wireguard", "authentication"],
+    "ai": ["ai", "artificial intelligence", "llm", "gpt", "chatgpt", "claude"],
+    "python": ["python"],
+    "rust": ["rust", "cargo"],
+    "ruby": ["ruby", "rails"],
+    "golang": ["golang", "go "],
+    "javascript": ["javascript", "js", "node", "nodejs", "typescript", "ts"],
+    "dotfiles": ["dotfile", "dotfiles", "chezmoi"],
+    "neovim": ["neovim", "nvim"],
+    "git": ["git", "github"],
+    "terminal": ["terminal", "shell", "zsh", "bash", "fish"],
+    "hyprland": ["hyprland"],
+    "wayland": ["wayland", "wlroots"],
+    "deployment": ["deploy", "deployment", "ci/cd", "ci", "cd"],
+    "devtools": ["devtool", "developer tool", "ide", "code editor"],
+    "cli": ["cli", "command line"],
+    "networking": ["network", "networking", "dns", "proxy", "traefik", "nginx", "caddy"],
+    "storage": ["storage", "nas", "zfs", "backup"],
+    "virtualization": ["virtual", "vm", "proxmox", "kvm", "qemu"],
+    "container": ["container", "lxc", "incus"],
+    "automation": ["automation", "ansible", "terraform", "opentofu", "infrastructure as code"],
+    "macos": ["macos", "mac os", "darwin", "macbook"],
+    "fedora": ["fedora", "ublue", "silverblue", "bluefin", "bazzite"],
+    "arch-linux": ["arch linux", "archlinux"],
+    "database": ["database", "postgres", "postgresql", "sql", "mysql", "sqlite"],
+    "opensource": ["open source", "opensource", "oss"],
+    "programming": ["programming", "code", "software development"],
+    "frontend": ["frontend", "css", "html", "ui", "react", "svelte", "vue"],
+    "gaming": ["gaming", "game", "steam", "bg3", "diablo", "baldurs gate"],
+    "music": ["music", "audio", "spotify"],
+    "travel": ["travel", "vacation", "trip", "hotel"],
+    "food": ["food", "recipe", "cooking", "bbq", "grilling", "cook"],
+    "fitness": ["fitness", "exercise", "workout", "health"],
+    "password-management": ["password", "bitwarden", "1password", "vault"],
+    "self-hosted": ["self-hosted", "self hosted"]
+  },
+
+  "tag_rules": [],
+
+  "note_templates": [
+    {
+      "id": "nt-github",
+      "domain_pattern": "(github|gitlab|codeberg)\\.(com|org)",
+      "template": "Git repository: {title}.",
+      "tone_penalty": 2,
+      "min_chars": 12
+    },
+    {
+      "id": "nt-youtube",
+      "domain_pattern": "youtube\\.com",
+      "template": "Video: {title}.",
+      "tone_penalty": 2,
+      "min_chars": 8
+    },
+    {
+      "id": "nt-reddit",
+      "domain_pattern": "reddit\\.com",
+      "template": "Reddit post: {title}.",
+      "tone_penalty": 2,
+      "min_chars": 10
+    },
+    {
+      "id": "nt-npm",
+      "domain_pattern": "npmjs\\.com",
+      "template": "npm package: {title}.",
+      "tone_penalty": 2,
+      "min_chars": 12
+    },
+    {
+      "id": "nt-crates",
+      "domain_pattern": "crates\\.io",
+      "template": "Rust crate: {title}.",
+      "tone_penalty": 2,
+      "min_chars": 12
+    },
+    {
+      "id": "nt-default",
+      "domain_pattern": ".*",
+      "template": "Bookmark: {title}.",
+      "tone_penalty": 3,
+      "min_chars": 11
+    }
+  ],
+
+  "coll_tag_map": {
+    "ai": ["ai"],
+    "linux": ["linux"],
+    "nixos": ["nixos", "nix"],
+    "homelab": ["homelab"],
+    "docker": ["docker", "container"],
+    "programming": ["programming"]
+  },
+
+  "thresholds": {
+    "collection_oversize_threshold": 25,
+    "max_tags_per_bookmark": 5,
+    "match_score_minimum": 10,
+    "no_match_cluster_min": 3,
+    "confidence_auto_approve": 0.95,
+    "confidence_flag_review": 0.70,
+    "quality_trend_window": 5,
+    "quality_drop_threshold": 1.0,
+    "quality_drop_consecutive_runs": 2,
+    "rate_limit_delay_s": 0.25,
+    "api_retries": 3,
+    "api_timeout_s": 15
+  },
+
+  "metadata": {
+    "total_runs_with_data": 0,
+    "last_run_id": null,
+    "last_run_timestamp": null
+  }
+}

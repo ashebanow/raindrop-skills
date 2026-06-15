@@ -19,14 +19,15 @@ Environment:
 
 import json, os, sys, urllib.request, urllib.error
 
-BASE = "https://api.raindrop.io/rest/v1"
+# Import shared constants
+_repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(_repo_root, "shared"))
+from raindrop_common import API_BASE, get_token
 
 def api(method, path, data=None):
-    url = f"{BASE}{path}"
-    token = os.environ.get("RAINDROP_TOKEN", "")
-    if not token:
-        print("ERROR: RAINDROP_TOKEN not set", file=sys.stderr)
-        sys.exit(1)
+    """CLI-style API call: exits on error (unlike shared module's api() which returns None)."""
+    url = f"{API_BASE}{path}"
+    token = get_token()
 
     body = json.dumps(data).encode() if data else None
     req = urllib.request.Request(url, data=body, method=method)

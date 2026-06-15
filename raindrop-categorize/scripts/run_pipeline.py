@@ -3,37 +3,35 @@
 Full raindrop-categorize pipeline runner.
 Phases: 0 (prune), 1 (collections+tags), 2 (eligible bookmarks), 3 (process), 4 (score)
 """
-import json, os, sys, time, urllib.request, urllib.error, logging, datetime
+import json, os, sys, time, datetime, re
 
-BASE = "https://api.raindrop.io/rest/v1"
-
-# Config
-TOKEN = os.environ.get("RAINDROP_TOKEN", "")
-if not TOKEN:
-    print("ERROR: RAINDROP_TOKEN not set", file=sys.stderr)
-    sys.exit(1)
+# --- Shared Raindrop utilities -------------------------------------------- #
+_repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(_repo_root, "shared"))
+from raindrop_common import (
+    api,
+    compute_precision_score,
+    load_rules as _load_rules,
+    TRACKING_TAG,
+    CACHE_DIR as _CACHE_DIR,
+)
 
 CACHE_DIR = os.path.expanduser("~/.hermes/cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 AUDIT_LOG = os.path.join(CACHE_DIR, "raindrop-audit-log.jsonl")
 QUALITY_FILE = os.path.join(CACHE_DIR, "raindrop-quality.json")
 NO_MATCH_FILE = os.path.join(CACHE_DIR, "raindrop-no-match.json")
-TRACKING_TAG = "_categorized-v2"
 
-def api(method, path, data=None):
-    url = f"{BASE}{path}"
-    body = json.dumps(data).encode() if data else None
-    req = urllib.request.Request(url, data=body, method=method)
-    req.add_header("Authorization", f"Bearer {TOKEN}")
-    if body:
-        req.add_header("Content-Type", "application/json")
-    try:
-        resp = urllib.request.urlopen(req, timeout=30)
-        return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        err = e.read().decode()
-        print(f"  HTTP {e.code} for {method} {path}: {err[:200]}", file=sys.stderr)
-        return None
+# --- Load rules from references/raindrop-rules.json ------------------------ #
+_rules_data = _load_rules()
+TAG_KEYWORDS = _rules_data.get("tag_keywords", {})
+COLL_TAG_MAP = _rules_data.get("coll_tag_map", {})
+thresholds = _rules_data.get("thresholds", {})
+MAX_TAGS = thresholds.get("max_tags_per_bookmark", 5)
+NOTE_TEMPLATES = _rules_data.get("note_templates", [])
+COLLECTION_KEYWORDS = _rules_data.get("collection_keywords", [])
+print(f"Loaded {len(TAG_KEYWORDS)} tag keyword groups, {len(COLL_TAG_MAP)} collection-tag mappings, "
+      f"{len(NOTE_TEMPLATES)} note templates, max_tags={MAX_TAGS}", flush=True)
 
 def paginate_raindrops(collection_id, max_items=999999):
     """Fetch all raindrops in a collection with pagination."""
@@ -503,70 +501,16 @@ for idx, rd in enumerate(eligible):
     inferred_tags = set()
     search_text = (title + " " + url + " " + new_note).lower()
     
-    tag_keywords = {
-        "linux": ["linux", "linux kernel"],
-        "nixos": ["nixos"],
-        "nix": ["nix", "nixpkgs", "nix-darwin", "home-manager"],
-        "homelab": ["homelab", "self-host", "self hosted", "home server"],
-        "docker": ["docker", "docker-compose", "docker compose"],
-        "kubernetes": ["kubernetes", "k8s", "k3s"],
-        "security": ["security", "cybersecurity", "vpn", "wireguard", "authentication"],
-        "ai": ["ai", "artificial intelligence", "llm", "gpt", "chatgpt", "claude"],
-        "python": ["python"],
-        "rust": ["rust", "cargo"],
-        "ruby": ["ruby", "rails"],
-        "golang": ["golang", "go "],
-        "javascript": ["javascript", "js", "node", "nodejs", "typescript", "ts"],
-        "dotfiles": ["dotfile", "dotfiles", "chezmoi"],
-        "neovim": ["neovim", "nvim"],
-        "git": ["git", "github"],
-        "terminal": ["terminal", "shell", "zsh", "bash", "fish"],
-        "hyprland": ["hyprland"],
-        "wayland": ["wayland", "wlroots"],
-        "deployment": ["deploy", "deployment", "ci/cd", "ci", "cd"],
-        "devtools": ["devtool", "developer tool", "ide", "code editor"],
-        "cli": ["cli", "command line"],
-        "networking": ["network", "networking", "dns", "proxy", "traefik", "nginx", "caddy"],
-        "storage": ["storage", "nas", "zfs", "backup"],
-        "virtualization": ["virtual", "vm", "proxmox", "kvm", "qemu"],
-        "container": ["container", "lxc", "incus"],
-        "automation": ["automation", "ansible", "terraform", "opentofu", "infrastructure as code"],
-        "macos": ["macos", "mac os", "darwin", "macbook"],
-        "fedora": ["fedora", "ublue", "silverblue", "bluefin", "bazzite"],
-        "arch-linux": ["arch linux", "archlinux"],
-        "database": ["database", "postgres", "postgresql", "sql", "mysql", "sqlite"],
-        "opensource": ["open source", "opensource", "oss"],
-        "programming": ["programming", "code", "software development"],
-        "frontend": ["frontend", "css", "html", "ui", "react", "svelte", "vue"],
-        "gaming": ["gaming", "game", "steam", "bg3", "diablo", "baldurs gate"],
-        "music": ["music", "audio", "spotify"],
-        "travel": ["travel", "vacation", "trip", "hotel"],
-        "food": ["food", "recipe", "cooking", "bbq", "grilling", "cook"],
-        "fitness": ["fitness", "exercise", "workout", "health"],
-        "security": ["security", "encryption", "firewall", "cryptography"],
-        "password management": ["password", "bitwarden", "1password", "vault"],
-        "self-hosted": ["self-hosted", "self hosted"],
-    }
-    
     # Add tags based on collection assignment
     if new_coll_id and new_coll_id in collection_map:
         coll_title_lower = collection_map[new_coll_id]["title"].lower()
-        # Map collection to tags
-        coll_tag_map = {
-            "ai": ["ai"],
-            "linux": ["linux"],
-            "nixos": ["nixos", "nix"],
-            "homelab": ["homelab"],
-            "docker": ["docker", "container"],
-            "programming": ["programming"],
-        }
-        for kw, tags in coll_tag_map.items():
+        for kw, tags in COLL_TAG_MAP.items():
             if kw in coll_title_lower:
                 for t in tags:
                     inferred_tags.add(t)
     
     # Add keyword-based tags
-    for tag_name, keywords in tag_keywords.items():
+    for tag_name, keywords in TAG_KEYWORDS.items():
         for kw in keywords:
             if kw in search_text:
                 inferred_tags.add(tag_name)
@@ -578,8 +522,8 @@ for idx, rd in enumerate(eligible):
         if tag not in final_tags:
             final_tags.append(tag)
     
-    # Limit to 5 tags max
-    final_tags = final_tags[:5]
+    # Limit tags per bookmark from rules
+    final_tags = final_tags[:MAX_TAGS]
     
     if set(final_tags) != set(real_tags):
         update_data = {"tags": final_tags}
@@ -622,11 +566,19 @@ for idx, rd in enumerate(eligible):
         "collection_title": collection_map.get(new_coll_id or current_coll_id, {}).get("title", current_coll_title)
     })
     
+    # Domain extraction for precision scoring
+    _domain = rd.get("domain", "") or rd_full.get("domain", "")
+
     processed.append({
         "id": rid,
         "title": title,
+        "domain": _domain,
+        "link": url,
         "fields_changed": fields_changed,
-        "note_length": len(new_note)
+        "note_length": len(new_note),
+        "note_text": new_note,
+        "collection_id": new_coll_id or current_coll_id,
+        "tags": final_tags,
     })
     
     # Pacing
@@ -661,17 +613,21 @@ for rd_data in processed:
     else:
         succinctness = 9
     
-    # Tone: always 7 (passable — automated)
-    tone = 7
+    # Tone: template-penalized scorer
+    tone = compute_tone_score(rd_data.get("note_text", ""), NOTE_TEMPLATES)
     
-    # Relevance: based on fields changed
-    fc = set(rd_data["fields_changed"])
-    if "collection" in fc and "tags" in fc:
-        relevance = 8
-    elif "collection" in fc or "tags" in fc:
-        relevance = 7
-    else:
-        relevance = 5
+    # Relevance: keyword-overlap precision score
+    _rd_title = rd_data.get("title", "")
+    _rd_domain = rd_data.get("domain", "")
+    _rd_link = rd_data.get("link", "")
+    _rd_coll_id = rd_data.get("collection_id")
+    _rd_tags = rd_data.get("tags", [])
+    _precision = compute_precision_score(
+        _rd_title, _rd_domain, _rd_link,
+        _rd_coll_id, _rd_tags,
+        _rules_data,
+    )
+    relevance = _precision["combined_score"]
     
     total_completeness += completeness
     total_succinctness += succinctness
@@ -691,6 +647,30 @@ print(f"  Avg tone: {avg_tone:.1f}/10")
 print(f"  Avg relevance: {avg_relevance:.1f}/10")
 print(f"  Overall avg: {avg_score:.1f}/10")
 
+# Per-collection metrics
+state_path = os.path.join(CACHE_DIR, "raindrop-state.json")
+if os.path.exists(state_path):
+    try:
+        with open(state_path, encoding="utf-8") as f:
+            state_data = json.load(f)
+        per_coll_metrics = compute_per_collection_metrics(
+            state_data, COLLECTION_KEYWORDS
+        )
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"  ⚠ Could not load state for per-collection metrics: {e}")
+        per_coll_metrics = {}
+else:
+    # Fall back to collection_map + processed data
+    per_coll_metrics = compute_per_collection_metrics(
+        {"collections": collection_map, "final_list": processed},
+        COLLECTION_KEYWORDS,
+    )
+print(f"  Collections touched: {per_coll_metrics.get('collections_touched', 0)}")
+if per_coll_metrics.get("breadth_flagged"):
+    print(f"  ⚠ Broad collections: {', '.join(per_coll_metrics['breadth_flagged'][:5])}")
+print(f"  Completeness avg: {per_coll_metrics.get('completeness_pct_avg', 0):.0%}")
+print(f"  Untagged avg: {per_coll_metrics.get('untagged_pct_avg', 0):.0%}")
+
 # Save quality
 run_record = {
     "timestamp": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -701,7 +681,8 @@ run_record = {
     "avg_succinctness": round(avg_succinctness, 1),
     "avg_tone": round(avg_tone, 1),
     "avg_relevance": round(avg_relevance, 1),
-    "avg_score": round(avg_score, 1)
+    "avg_score": round(avg_score, 1),
+    "per_collection_metrics": per_coll_metrics,
 }
 
 if "runs" not in quality:
