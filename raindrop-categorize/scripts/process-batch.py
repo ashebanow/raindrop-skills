@@ -28,6 +28,7 @@ import re
 import sys
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from typing import Optional
 
 # --- Shared Raindrop utilities -------------------------------------------- #
@@ -37,8 +38,12 @@ from raindrop_common import (
     api as _api,
     compute_precision_score,
     detect_note_template as _detect_note_template_shared,
+    fetch_page_content,
     load_rules as _load_rules,
+    query_domain_fingerprint,
+    should_fetch_url,
     TRACKING_TAG,
+    update_domain_fingerprint,
 )
 
 # Re-export api for local use (preserves backward compat within this file)
@@ -62,6 +67,12 @@ COLLECTION_KEYWORD_MAP = [
     for entry in _rules_data.get("collection_keywords", [])
 ]
 
+# Reverse map for domain fingerprint collection lookup
+COLLECTION_TITLE_TO_ID = {
+    entry["collection_title"]: entry["collection_id"]
+    for entry in _rules_data.get("collection_keywords", [])
+}
+
 # Tag rules: list of (regex_pattern, tag_name) from tag_rules
 TAG_RULES = [
     (entry["pattern"], entry["tag"])
@@ -80,6 +91,7 @@ MAX_TAGS = thresholds.get("max_tags_per_bookmark", 5)
 API_RETRIES = thresholds.get("api_retries", 3)
 API_TIMEOUT = thresholds.get("api_timeout_s", 15)
 RATE_LIMIT_DELAY = thresholds.get("rate_limit_delay_s", 0.25)
+MIN_OCCURRENCES = thresholds.get("min_occurrences", 2)  # min keyword occurrences in rich text to suggest a tag
 
 print(f"Loaded {len(COLLECTION_KEYWORD_MAP)} collection rules, "
       f"{len(TAG_KEYWORDS)} tag keyword groups, "
@@ -93,23 +105,42 @@ print(f"Loaded {len(COLLECTION_KEYWORD_MAP)} collection rules, "
 
 # --- Inference helpers ------------------------------------------------------ #
 
-def infer_real_tags(title: str, domain: str) -> list[str]:
-    """Infer real (non-tracking) tags from title + domain.
+def infer_real_tags(title: str, domain: str, rich_text: Optional[str] = None) -> list[str]:
+    """Infer real (non-tracking) tags from title + domain + optional rich_text.
 
-    First tries keyword matching from tag_keywords (41 groups), then
-    falls back to regex tag_rules if any are defined (currently 0).
+    When rich_text is provided (page body text), uses frequency-weighted
+    scoring: all keywords for a tag are counted across the full text
+    (title + domain + rich_text), and a tag is assigned only if the total
+    occurrence count meets MIN_OCCURRENCES (default 2). This avoids
+    false positives from sidebar/nav text where a keyword appears once.
+
+    When rich_text is NOT available (fetch failed or blacklisted domain),
+    falls back to binary matching against title + domain only. This
+    preserves existing behavior for unreachable URLs.
+
+    After keyword matching, falls back to regex tag_rules if defined.
     """
-    text = (title + " " + (domain or "")).lower()
+    text = ((title or "") + " " + (domain or "")).lower()
     matched: list[str] = []
 
-    # Primary: keyword matching against tag_keywords
-    for tag_name, keywords in TAG_KEYWORDS.items():
-        for kw in keywords:
-            if kw in text and tag_name not in matched:
+    if rich_text:
+        # Frequency-weighted scoring against full text
+        match_text = (text + " " + rich_text.lower())
+        for tag_name, keywords in TAG_KEYWORDS.items():
+            total_count = sum(match_text.count(kw) for kw in keywords)
+            if total_count >= MIN_OCCURRENCES:
                 matched.append(tag_name)
+                if len(matched) >= MAX_TAGS:
+                    break
+    else:
+        # Binary matching against title + domain only (existing behavior)
+        for tag_name, keywords in TAG_KEYWORDS.items():
+            for kw in keywords:
+                if kw in text and tag_name not in matched:
+                    matched.append(tag_name)
+                    break
+            if len(matched) >= MAX_TAGS:
                 break
-        if len(matched) >= MAX_TAGS:
-            break
 
     # Fallback: regex rules (if any are configured)
     if not matched:
@@ -131,16 +162,63 @@ def infer_note(title: str, domain: str, link: str) -> str:
     return f"Bookmark: {title}."
 
 
-def find_collection(title: str, domain: str):
-    """First-match-wins keyword lookup against the collection keyword map.
+def build_note_from_content(page_content: dict, title: str) -> str:
+    """Build a human-readable note from fetched page content.
+
+    Priority:
+    1. meta_description (truncated to 200 chars)
+    2. body_text first 150 chars
+    3. Fall back to template-driven infer_note()
+    """
+    meta_desc = (page_content.get("meta_description") or "").strip()
+    if meta_desc:
+        return meta_desc[:200]
+    body_text = (page_content.get("body_text") or "").strip()
+    if body_text:
+        return body_text[:150]
+    # No usable content from page
+    return f"Bookmark: {title}."
+
+
+def find_collection(title: str, domain: str, rich_text: Optional[str] = None):
+    """Find the best-matching collection via keyword scoring.
+
+    When rich_text is available, uses frequency-based scoring across all
+    rule keywords in title + domain + rich_text.  Highest cumulative score
+    wins, with title/domain matches getting a 2x bonus.  Requires a minimum
+    cumulative score of 2 to return a result.
+
+    When rich_text is NOT available, falls back to first-match-wins keyword
+    lookup against title + domain only (original behavior).
 
     Returns (collection_id, collection_title) tuple, or None.
     """
-    text = (title + " " + (domain or "")).lower()
-    for keywords, coll_id, coll_title in COLLECTION_KEYWORD_MAP:
-        if any(kw in text for kw in keywords):
-            return (coll_id, coll_title)
-    return None
+    text = ((title or "") + " " + (domain or "")).lower()
+
+    if rich_text:
+        # Frequency-weighted scoring: highest total keyword frequency wins
+        match_text = text + " " + rich_text.lower()
+        best_score = 0
+        best_match = None
+        for keywords, coll_id, coll_title in COLLECTION_KEYWORD_MAP:
+            score = sum(match_text.count(kw) for kw in keywords)
+            # Bonus: keyword in title/domain is stronger than in body
+            title_bonus = sum(2 for kw in keywords if kw in text)
+            score += title_bonus
+            if score > best_score:
+                best_score = score
+                best_match = (coll_id, coll_title)
+
+        # Minimum cumulative score of 2 to avoid noise
+        if best_score >= 2:
+            return best_match
+        return None
+    else:
+        # First-match-wins against title+domain only (existing behavior)
+        for keywords, coll_id, coll_title in COLLECTION_KEYWORD_MAP:
+            if any(kw in text for kw in keywords):
+                return (coll_id, coll_title)
+        return None
 
 
 # --- Persistence helpers ---------------------------------------------------- #
@@ -399,20 +477,51 @@ def process_comparison(bookmark: dict) -> str:
     existing_coll = bookmark.get("collection") or {}
     existing_coll_id = existing_coll.get("$id")
 
+    # Fetch page content for richer inference
+    page_content = fetch_page_content(link)
+    rich_text = None
+    if page_content and page_content.get("body_text"):
+        rich_text = (title + " " + (domain or "") + " "
+                     + page_content.get("meta_description", "") + " "
+                     + page_content.get("body_text", ""))
+
     # Run inference (same as for new bookmarks)
-    inferred_note = infer_note(title, domain, link)
-    inferred_tags = infer_real_tags(title, domain)
+    inferred_tags = infer_real_tags(title, domain, rich_text=rich_text)
+    if page_content and page_content.get("body_text"):
+        inferred_note = build_note_from_content(page_content, title)
+    else:
+        inferred_note = infer_note(title, domain, link)
     inferred_coll_id = None
     inferred_coll_title = None
 
     current_coll_id = existing_coll.get("$id")
     is_unsorted = current_coll_id in (None, -1, 0)
     if is_unsorted:
-        match = find_collection(title, domain)
+        match = find_collection(title, domain, rich_text=rich_text)
         if match:
             inferred_coll_id, inferred_coll_title = match
     else:
         inferred_coll_id = current_coll_id  # keep existing
+
+    # Domain fingerprint cache: supplement tags & collection with cached signals
+    domain_key = urlparse(link).netloc.lower() if link else domain
+    domain_signal = query_domain_fingerprint(domain_key)
+    if domain_signal:
+        for suggested_tag in domain_signal.get("tags", []):
+            if suggested_tag not in inferred_tags:
+                inferred_tags.append(suggested_tag)
+        if not inferred_coll_id and domain_signal.get("collections"):
+            best_coll = domain_signal["collections"][0]
+            coll_id = COLLECTION_TITLE_TO_ID.get(best_coll[0])
+            if coll_id:
+                inferred_coll_id = coll_id
+                inferred_coll_title = best_coll[0]
+
+    # Update domain fingerprint with fetched content (only with a real collection)
+    if page_content and page_content.get("body_text"):
+        _assigned_coll_title = inferred_coll_title if inferred_coll_id else (existing_coll.get("title", "") if not is_unsorted else "")
+        if _assigned_coll_title:
+            update_domain_fingerprint(domain_key, page_content["body_text"], inferred_tags, _assigned_coll_title)
 
     # Compare
     verdict = compare_assignments(
@@ -544,8 +653,19 @@ def process_one(bookmark: dict):
     if TRACKING_TAG in existing_tags:
         return process_comparison(bookmark)
 
-    note = infer_note(title, domain, link)
-    real_tags = infer_real_tags(title, domain)
+    # Fetch page content for richer inference
+    page_content = fetch_page_content(link)
+    rich_text = None
+    if page_content and page_content.get("body_text"):
+        rich_text = (title + " " + (domain or "") + " "
+                     + page_content.get("meta_description", "") + " "
+                     + page_content.get("body_text", ""))
+
+    real_tags = infer_real_tags(title, domain, rich_text=rich_text)
+    if page_content and page_content.get("body_text"):
+        note = build_note_from_content(page_content, title)
+    else:
+        note = infer_note(title, domain, link)
 
     current_coll = bookmark.get("collection") or {}
     current_coll_id = current_coll.get("$id")
@@ -553,9 +673,23 @@ def process_one(bookmark: dict):
 
     # Determine assigned collection (if any)
     _assigned_coll_id = None
-    _match = find_collection(title, domain) if is_unsorted else None
+    _match = find_collection(title, domain, rich_text=rich_text) if is_unsorted else None
     if _match:
         _assigned_coll_id = _match[0]
+
+    # Domain fingerprint cache: supplement tags & collection with cached signals
+    domain_key = urlparse(link).netloc.lower() if link else domain
+    domain_signal = query_domain_fingerprint(domain_key)
+    if domain_signal:
+        for suggested_tag in domain_signal.get("tags", []):
+            if suggested_tag not in real_tags:
+                real_tags.append(suggested_tag)
+        if not _match and domain_signal.get("collections"):
+            best_coll = domain_signal["collections"][0]
+            coll_id = COLLECTION_TITLE_TO_ID.get(best_coll[0])
+            if coll_id:
+                _match = (coll_id, best_coll[0])
+                _assigned_coll_id = coll_id
 
     # Compute precision score for audit logging
     _precision_result = compute_precision_score(
@@ -592,7 +726,7 @@ def process_one(bookmark: dict):
 
     # --- Phase 3b: assign collection (only if currently Unsorted) ---
     if is_unsorted:
-        match = find_collection(title, domain)
+        match = _match
         if match is None:
             phase_3b_state = "no_match"
             if not DRY_RUN:
@@ -620,6 +754,12 @@ def process_one(bookmark: dict):
                     })
             else:
                 phase_3b_state = "failed"
+
+    # Update domain fingerprint with fetched content (only with a real collection)
+    if page_content and page_content.get("body_text"):
+        _assigned_coll_title = _match[1] if _match else (current_coll.get("title", "") if not is_unsorted else "")
+        if _assigned_coll_title:
+            update_domain_fingerprint(domain_key, page_content["body_text"], real_tags, _assigned_coll_title)
 
     # --- Phase 3c: merge tags (never remove existing tags) ---
     # Merge existing real tags with inferred tags. Existing tags are
@@ -691,12 +831,39 @@ def main() -> int:
                 process_comparison(r)
                 counts["compared"] += 1
             else:
-                # Dry-run inference for new bookmarks
-                real = infer_real_tags(r.get("title", ""), r.get("domain", ""))
-                note = infer_note(r.get("title", ""), r.get("domain", ""), r.get("link", ""))
+                # Dry-run inference for new bookmarks (include page content)
+                link = r.get("link", "")
+                page_content = fetch_page_content(link)
+                rich_text = None
+                if page_content and page_content.get("body_text"):
+                    rich_text = (r.get("title", "") + " " + (r.get("domain", "") or "") + " "
+                                 + page_content.get("meta_description", "") + " "
+                                 + page_content.get("body_text", ""))
+                real = infer_real_tags(r.get("title", ""), r.get("domain", ""), rich_text=rich_text)
+                if page_content and page_content.get("body_text"):
+                    note = build_note_from_content(page_content, r.get("title", ""))
+                else:
+                    note = infer_note(r.get("title", ""), r.get("domain", ""), link)
                 current_coll = r.get("collection") or {}
                 is_unsorted = current_coll.get("$id") in (None, -1, 0)
-                match = find_collection(r.get("title", ""), r.get("domain", "")) if is_unsorted else None
+                match = find_collection(r.get("title", ""), r.get("domain", ""), rich_text=rich_text) if is_unsorted else None
+                # Domain fingerprint cache: supplement tags & collection with cached signals
+                domain_key = urlparse(link).netloc.lower() if link else r.get("domain", "")
+                domain_signal = query_domain_fingerprint(domain_key)
+                if domain_signal:
+                    for suggested_tag in domain_signal.get("tags", []):
+                        if suggested_tag not in real:
+                            real.append(suggested_tag)
+                    if not match and domain_signal.get("collections"):
+                        best_coll = domain_signal["collections"][0]
+                        coll_id = COLLECTION_TITLE_TO_ID.get(best_coll[0])
+                        if coll_id:
+                            match = (coll_id, best_coll[0])
+                # Update domain fingerprint with fetched content (only with a real collection)
+                if page_content and page_content.get("body_text"):
+                    _assigned_coll_title = match[1] if match else (current_coll.get("title", "") if not is_unsorted else "")
+                    if _assigned_coll_title:
+                        update_domain_fingerprint(domain_key, page_content["body_text"], real, _assigned_coll_title)
                 coll_str = f" → {match[1]}" if match else (" → (no match)" if is_unsorted else " → (already in collection)")
                 print(f"  [{i+1}/{total}] {r.get('title', '?')[:50]}{coll_str}  tags: {real}", flush=True)
                 counts["tagged" if match or not is_unsorted else "deferred"] += 1

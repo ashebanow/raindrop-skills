@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Deploy updated skills to Hermes skills directory.
-# Run from repo root after making changes to skill scripts.
+# Run from repo root: ./deploy-skills.sh
 
 set -euo pipefail
 
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILLS_DIR="${HOME}/.hermes/skills"
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "=== Deploying raindrop-categorize ==="
 cp "${REPO_DIR}/raindrop-categorize/scripts/"*.py "${SKILLS_DIR}/raindrop-categorize/scripts/"

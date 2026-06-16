@@ -16,6 +16,11 @@
 | **3b** | Verification script | ✅ Complete | `scripts/verify-holdout.py` — re-runs inference against holdout, computes collection accuracy + tag precision/recall/F1. Wired into cron orchestrator. |
 | **3c** | User curation | ⏳ **Your turn** | Run `python3 scripts/build-holdout.py` to confirm ~100 bookmarks. Resume any time. Includes tag review step — inferred tags shown alongside existing, toggle with number keys. |
 | **3d** | Tag holdout flow | 📝 Planned | Future: separate tag-only verification pass. Inferred tags can be compared against confirmed tags to compute tag precision/recall independently of collection accuracy. |
+| **5a** | Fetch URL content in cron path | ✅ Complete | `fetch_page_content()` in shared module. `build_note_from_content()` for real notes. `rich_text` parameter on `infer_real_tags()` and `find_collection()`. `SKIP_FETCH_DOMAINS` blacklist. |
+| **5b** | Domain fingerprint cache | ✅ Complete | Domain-keyed word frequencies, tag/collection consensus. `load/save/update/query_domain_fingerprint()` in shared module. Wired into both process paths. After ~5 pages per domain, cached signals supplement keyword inference. |
+| **5c** | Frequency-weighted tag scoring | ✅ Complete | `infer_real_tags()` uses `MIN_OCCURRENCES=2` on rich text: counts keyword occurrences across page body, only suggests tags exceeding threshold. Falls back to binary matching when no page content. |
+| **5d** | Collection from page content | ✅ Complete | `find_collection()` uses frequency scoring on rich text: scores all 16 collection rules by total keyword occurrences, title matches get 2x bonus, minimum score of 2. Falls back to first-match-wins when no page content. |
+| **5e** | Domain blacklist | ✅ Complete | Inline in `should_fetch_url()`. Wikipedia, GitHub, Reddit, YouTube, Discord, Twitter, Instagram, Facebook, TikTok — skipped for both fetching and fingerprint accumulation. |
 | **4** | Rule proposal lifecycle | ⏳ Pending | Auto-approval, merge workflow, kanban integration, safety-valve auto-revert. |
 
 ## Status Quo (June 2026)
@@ -590,3 +595,198 @@ A and B share the proposals file format but modify different fields (A writes pr
 - Defining the rules file schema (must be sequential to provide the contract)
 - The pipeline scripts themselves (single-threaded by nature — one bookmark at a time for rate limiting)
 - User curation of the holdout set (manual work)
+
+---
+
+## Phase 5 — Content-Driven Inference with Domain Caching (Planned)
+
+**Status:** Not started. Hold until Phase 3 holdout curation is complete.
+
+### The Problem
+
+Tag and collection inference currently runs against **title + domain only** (5-20 words). This is insufficient signal, producing three failure modes:
+
+1. **Substring false positives** — `"ai"` matches `"maintenance"`, `"retainer"`, `"Brazil"` (present in many words)
+2. **Topic-blind matches** — A food recipe page suggested as `"AI"` because a sidebar or footer mentioned "AI"
+3. **False negatives** — A page about "Rustic Sourdough Bread" won't match the keyword `"recipe"` even though the page is a recipe, because "recipe" isn't in the title
+
+The interactive path (`run_pipeline.py`) already fetches URL page content — the cron path (`process-batch.py`) does not, leaving the cron runs with the poorest signal.
+
+### Solution Overview
+
+Bring URL content fetching into the cron path and introduce a **domain-level text fingerprint cache** that compounds over time, turning the cron path from the weakest inferencer into the strongest.
+
+---
+
+### Phase 5a — Fetch URL Content in the Cron Path
+
+**Goal:** Give the cron path the same real page content the interactive path has.
+
+**Implementation:**
+
+1. Add `fetch_page_content(url, timeout=5)` to `shared/raindrop_common.py`:
+   - Fetch the URL with a short timeout (5s)
+   - Extract: `<title>`, `<meta name="description">`, `<meta name="keywords">`, `<meta property="og:*">`
+   - Strip HTML tags from `<body>`, keeping ~300 words of clean text
+   - Return dict: `{"title", "meta_description", "meta_keywords", "body_text", "og_type"}`
+   - On failure (timeout, DNS, 4xx/5xx): return `None` — never crash, just fall back
+
+2. Call `fetch_page_content()` in both `process_one()` and `process_comparison()` before inference:
+   - If content available → feed page body into `infer_real_tags()`, `find_collection()`, AND note generation
+   - If content unavailable → fall back to current title+domain matching
+
+3. **Cache the raw page text** per-URL with 7-day TTL in `~/.hermes/cache/raindrop-page-cache/pages/`:
+   - Keyed by URL (normalised: strip tracking params, fragments)
+   - TTL avoids stale content; at 7 days the entry is evicted
+   - Hit rate on this alone is low (~10-15%) because the pipeline intentionally avoids recently-processed bookmarks
+
+4. **Domain blacklist** — skip URL fetch for known user-content aggregators where page content adds no signal:
+
+```
+SKIP_FETCH_DOMAINS = {
+    "wikipedia.org", "github.com", "gitlab.com", "bitbucket.org",
+    "discord.com", "discord.gg", "twitter.com", "x.com",
+    "reddit.com", "youtube.com", "youtu.be",
+    "instagram.com", "facebook.com", "tiktok.com",
+}
+```
+
+**Tradeoff:** Each URL fetch adds ~3-5s. For a batch of 100 bookmarks, ~60-70 will be fetchable (excluding blacklist + unreachable), adding ~3-5 min to the batch. Acceptable within the cron window.
+
+---
+
+### Phase 5b — Domain Fingerprint Cache
+
+**Goal:** Turn the cost of URL fetching into a lasting asset that compounds over runs.
+
+**Concept:**
+
+Instead of caching per-URL, maintain **domain-level text fingerprints** that accumulate word frequencies across every page fetched on that domain. After a few runs, most common domains will have enough data for reliable inference without fetching at all.
+
+**Data structure** (`~/.hermes/cache/raindrop-page-cache/domains/{domain}.json`):
+
+```json
+{
+  "domain": "seriouseats.com",
+  "total_pages": 47,
+  "last_fetched": "2026-06-16T10:30:00Z",
+  "word_frequencies": {
+    "recipe": 42, "ingredients": 38, "cook": 35,
+    "cup": 18, "bake": 15, "heat": 12, "oven": 10
+  },
+  "top_tags": [
+    {"tag": "food", "count": 40, "confidence": 0.85},
+    {"tag": "cooking", "count": 12, "confidence": 0.26}
+  ],
+  "top_collections": [
+    {"collection": "Food & Drink", "count": 38, "confidence": 0.81}
+  ]
+}
+```
+
+**Workflow:**
+
+1. Before fetching a URL → check domain fingerprint. If the fingerprint has ≥5 pages and ≥80% consensus on a collection/tag, **skip the fetch** and use the fingerprint directly.
+2. On page fetch → update the domain fingerprint: increment word frequencies, update top_tags/top_collections with the assigned values from this run.
+3. On unreachable URL → fall back to the domain fingerprint as the sole signal source.
+4. On blacklisted domain → skip fetch AND skip fingerprint accumulation (these domains produce no consistent signal).
+
+**Hit rate over time:**
+
+| After | Domains accumulated | New-bookmark hit rate | Batch time |
+|---|---|---|---|
+| Run 1 | ~40 | ~5% | ~5-6 min (mostly fetches) |
+| Run 7 | ~200 | ~40-50% | ~3-4 min |
+| Run 30 | ~600 | ~65-75% | ~1.5-2.5 min |
+| Run 90 | ~1200 | ~80-85% | ~1-2 min |
+
+The system gets **faster over time**, not slower — the opposite of a naive per-URL cache.
+
+**Garbage collection:**
+- Page-level entries: purge >7 days old each run
+- Domain fingerprints: persist indefinitely. Old entries decay via a recency weight: fingerprints from the last 30 days get full weight, older ones are halved.
+- Domains with 0 hits in 90 days: archive.
+
+---
+
+### Phase 5c — Frequency-Weighted Tag Scoring
+
+**Goal:** Replace binary keyword matching (`if kw in text`) with frequency-based scoring, eliminating substring false positives.
+
+**Implementation:**
+
+Instead of:
+```python
+if kw in text:  # matches "ai" in "maintenance", "recipe" in title even if page isn't a recipe
+    suggest_tag(tag)
+```
+
+Use:
+```python
+count = text.lower().count(kw)  # actual occurrence count
+if count >= MIN_OCCURRENCES:     # e.g. 2, or in the top-N frequent words
+    score = count / max_freq    # normalised 0-1
+    if score > threshold:
+        suggest_tag(tag, score)
+```
+
+**`MIN_OCCURRENCES`** starts at 2 for page-body text (eliminates single-occurrence false positives like "ai" in "maintenance"). For title-only (fallback when page unreachable), keep the current binary match.
+
+**Word frequency analysis:** After extracting body text, compute the top 15-20 most frequent non-stop words. Any tag keyword appearing in the top 15 is a strong signal. Keywords appearing below that threshold are weak.
+
+---
+
+### Phase 5d — Collection Inference from Page Content
+
+**Goal:** Use the same page content to improve collection assignment, not just tags.
+
+**Implementation:**
+
+Currently `find_collection()` matches keywords against title + domain (~20 words). With page content (~300 words), the match surface is 15x larger.
+
+1. Run keyword matching against the full page text (title + meta description + body text)
+2. Score each collection rule by the **frequency** of its keywords in the page text (not just presence)
+3. A recipe page mentioning "recipe" 15x, "ingredients" 10x, "cook" 8x scores much higher on "Food & Drink" than a page mentioning "computer" once
+
+This directly addresses the "AI suggested for a recipe" problem — even if "ai" appears once in a sidebar, it won't out-score "recipe" × 15 occurrences.
+
+---
+
+### Phase 5e — Domain Blacklist
+
+Domains where URL content provides no consistent categorization signal (user-generated content aggregators).
+
+```
+SKIP_FETCH_DOMAINS = {
+    "wikipedia.org",       # Encyclopedic — no single topic signal
+    "github.com",          # All topics, all languages
+    "gitlab.com",
+    "bitbucket.org",
+    "discord.com",
+    "discord.gg",
+    "twitter.com",
+    "x.com",
+    "reddit.com",          # All topics, comments are the content
+    "youtube.com",
+    "youtu.be",
+    "instagram.com",
+    "facebook.com",
+    "tiktok.com",
+}
+```
+
+Bookmarks from these domains still get tag/collection inference — from title + domain only (current behavior). No fetch attempt, no fingerprint accumulation.
+
+---
+
+### Implementation Order (Post-Holdout)
+
+| Sub-phase | Depends on | What it delivers | Batch time impact |
+|---|---|---|---|
+| **5a** — Fetch content in cron path | Nothing new (adds to shared module) | Real notes + page text for inference | +3-5 min (first run) |
+| **5b** — Domain fingerprint cache | 5a (needs fetch to build fingerprints) | Compounding speed: ~80% hit rate after 90 runs | -2-3 min (steadily improves) |
+| **5c** — Frequency-weighted scoring | 5a (needs page body text) | Eliminates substring false positives | No change |
+| **5d** — Collection from page content | 5a (needs page body text) | Better collection assignment from 15x signal | No change |
+| **5e** — Domain blacklist | 5a (needs the fetch function) | Avoid wasted fetches on noisy domains | Improves immediately |
+
+**Recommended order:** 5a + 5e together (parallel — both add to shared module), then 5b, then 5c + 5d (parallel — both consume page text).

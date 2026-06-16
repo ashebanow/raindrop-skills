@@ -16,12 +16,15 @@ import time
 from typing import Optional
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 # ── Constants ────────────────────────────────────────────────────────
 
 API_BASE = "https://api.raindrop.io/rest/v1"
 TRACKING_TAG = "_categorized-v2"
 CACHE_DIR = os.path.expanduser("~/.hermes/cache")
+DOMAIN_CACHE_DIR = os.path.expanduser("~/.hermes/cache/raindrop-page-cache")
+DOMAIN_CACHE_TTL_DAYS = 90  # domains untouched this long get archived
 
 
 # ── Token ────────────────────────────────────────────────────────────
@@ -380,7 +383,233 @@ def compute_per_collection_metrics(
     }
 
 
+# ── Domain fingerprint cache ───────────────────────────────────────────
+
+
+def _domain_cache_path(domain: str) -> str:
+    """Path to a domain's fingerprint JSON file."""
+    safe = domain.replace(".", "_")
+    return os.path.join(DOMAIN_CACHE_DIR, "domains", f"{safe}.json")
+
+
+def load_domain_fingerprint(domain: str) -> dict:
+    """Load domain fingerprint, or return empty defaults."""
+    path = _domain_cache_path(domain)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {
+        "domain": domain,
+        "total_pages": 0,
+        "last_fetched": None,
+        "word_frequencies": {},
+        "top_tags": [],
+        "top_collections": [],
+    }
+
+
+def save_domain_fingerprint(fingerprint: dict):
+    """Save domain fingerprint."""
+    os.makedirs(os.path.dirname(_domain_cache_path(fingerprint["domain"])), exist_ok=True)
+    with open(_domain_cache_path(fingerprint["domain"]), "w") as f:
+        json.dump(fingerprint, f, indent=2)
+
+
+def update_domain_fingerprint(domain: str, body_text: str, assigned_tags: list, assigned_collection_title: str):
+    """Update a domain fingerprint with content from one page fetch.
+
+    Args:
+        domain: The domain (e.g. "seriouseats.com")
+        body_text: The page body text (~300 words)
+        assigned_tags: List of tags assigned to this bookmark
+        assigned_collection_title: Collection title assigned
+    """
+    import re
+
+    fp = load_domain_fingerprint(domain)
+    fp["total_pages"] += 1
+    fp["last_fetched"] = datetime.now(timezone.utc).isoformat()
+
+    # Update word frequencies
+    words = re.findall(r"[a-zA-Z][a-zA-Z0-9]{2,}", body_text.lower())
+    stop_words = {"the", "and", "for", "are", "was", "were", "been",
+                  "that", "this", "with", "from", "have", "has",
+                  "not", "but", "all", "can", "you", "its", "our",
+                  "their", "your", "which", "what", "when", "where",
+                  "how", "who", "why", "more", "some", "about", "also"}
+    for w in words:
+        if w not in stop_words and len(w) > 2:
+            fp["word_frequencies"][w] = fp["word_frequencies"].get(w, 0) + 1
+
+    # Update top_tags: increment count for each assigned tag
+    tag_counts = {t["tag"]: t["count"] for t in fp["top_tags"]}
+    for t in assigned_tags:
+        tag_counts[t] = tag_counts.get(t, 0) + 1
+    # Sort and keep top 10
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: -x[1])
+    fp["top_tags"] = [
+        {"tag": t, "count": c, "confidence": round(c / fp["total_pages"], 3)}
+        for t, c in sorted_tags[:10]
+    ]
+
+    # Update top_collections
+    coll_counts = {c["collection"]: c["count"] for c in fp["top_collections"]}
+    coll_counts[assigned_collection_title] = coll_counts.get(assigned_collection_title, 0) + 1
+    sorted_colls = sorted(coll_counts.items(), key=lambda x: -x[1])
+    fp["top_collections"] = [
+        {"collection": c, "count": count, "confidence": round(count / fp["total_pages"], 3)}
+        for c, count in sorted_colls[:10]
+    ]
+
+    save_domain_fingerprint(fp)
+
+
+def query_domain_fingerprint(domain: str, min_pages: int = 5, min_confidence: float = 0.7):
+    """Query domain fingerprint for reliable signals.
+
+    Args:
+        domain: Domain to query
+        min_pages: Minimum total pages before considering the signal reliable
+        min_confidence: Minimum confidence to return a suggestion
+
+    Returns:
+        dict with "tags", "collections", "top_words" keys, or None if not enough data
+    """
+    fp = load_domain_fingerprint(domain)
+    if fp["total_pages"] < min_pages:
+        return None
+
+    result = {}
+
+    # Tags with sufficient confidence
+    reliable_tags = [t for t in fp["top_tags"] if t["confidence"] >= min_confidence]
+    if reliable_tags:
+        result["tags"] = [t["tag"] for t in reliable_tags]
+
+    # Collections with sufficient confidence
+    reliable_colls = [c for c in fp["top_collections"] if c["confidence"] >= min_confidence]
+    if reliable_colls:
+        result["collections"] = [(c["collection"], c["confidence"]) for c in reliable_colls]
+
+    # Top 20 frequent words for contextual matching
+    top_words = sorted(fp["word_frequencies"].items(), key=lambda x: -x[1])[:20]
+    if top_words:
+        result["top_words"] = [w for w, _ in top_words]
+
+    return result if (reliable_tags or reliable_colls) else None
+
+
 # ── Precision scoring ───────────────────────────────────────────────
+
+SKIP_FETCH_DOMAINS = {
+    "wikipedia.org", "github.com", "gitlab.com", "bitbucket.org",
+    "discord.com", "discord.gg", "twitter.com", "x.com",
+    "reddit.com", "youtube.com", "youtu.be",
+    "instagram.com", "facebook.com", "tiktok.com",
+}
+
+
+def should_fetch_url(url: str) -> bool:
+    """Check if a URL should be fetched (not blacklisted)."""
+    from urllib.parse import urlparse
+    try:
+        domain = urlparse(url).netloc.lower()
+        for skip in SKIP_FETCH_DOMAINS:
+            if skip in domain:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def fetch_page_content(url: str, timeout: int = 5, max_body_words: int = 300) -> Optional[dict]:
+    """Fetch a URL and extract readable text content.
+
+    Returns dict with keys: title, meta_description, meta_keywords,
+    body_text, og_type, success.
+
+    Returns None on any failure (timeout, DNS, 4xx/5xx).
+    Never raises an exception --- always returns None on failure.
+    """
+    import urllib.request
+    import urllib.error
+    import re
+
+    if not should_fetch_url(url):
+        return None
+
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; raindrop-categorize/1.0)",
+            "Accept": "text/html",
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            # Check content type --- skip non-HTML
+            ct = resp.headers.get("Content-Type", "")
+            if "text/html" not in ct and "application/xhtml" not in ct:
+                return None
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+    result = {"success": True}
+
+    # Extract <title>
+    m = re.search(r'<title[^>]*>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
+    result["title"] = m.group(1).strip() if m else ""
+
+    # Extract <meta name="description">
+    m = re.search(
+        r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']*)["\']',
+        html, re.IGNORECASE
+    )
+    result["meta_description"] = m.group(1).strip() if m else ""
+    if not result["meta_description"]:
+        # Try og:description
+        m = re.search(
+            r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\']*)["\']',
+            html, re.IGNORECASE
+        )
+        result["meta_description"] = m.group(1).strip() if m else ""
+
+    # Extract <meta name="keywords">
+    m = re.search(
+        r'<meta[^>]*name=["\']keywords["\'][^>]*content=["\']([^"\']*)["\']',
+        html, re.IGNORECASE
+    )
+    result["meta_keywords"] = m.group(1).strip() if m else ""
+
+    # Extract og:type
+    m = re.search(
+        r'<meta[^>]*property=["\']og:type["\'][^>]*content=["\']([^"\']*)["\']',
+        html, re.IGNORECASE
+    )
+    result["og_type"] = m.group(1).strip() if m else ""
+
+    # Extract body text (strip tags, collapse whitespace)
+    m = re.search(r'<body[^>]*>(.*?)</body>', html, re.IGNORECASE | re.DOTALL)
+    if m:
+        body = m.group(1)
+        # Remove script and style blocks
+        body = re.sub(r'<script[^>]*>.*?</script>', '', body, flags=re.IGNORECASE | re.DOTALL)
+        body = re.sub(r'<style[^>]*>.*?</style>', '', body, flags=re.IGNORECASE | re.DOTALL)
+        # Strip tags
+        body = re.sub(r'<[^>]+>', ' ', body)
+        # Collapse whitespace
+        body = re.sub(r'\s+', ' ', body).strip()
+        # Truncate to max_body_words
+        words = body.split()
+        if len(words) > max_body_words:
+            words = words[:max_body_words]
+        result["body_text"] = ' '.join(words)
+    else:
+        result["body_text"] = ""
+
+    return result
+
 
 def compute_precision_score(title, domain, url, assigned_collection_id, assigned_tags, rules_data):
     """Compute keyword-overlap precision for an assigned collection and tags.
