@@ -228,9 +228,9 @@ def tag_review_prompt(existing_tags: list, inferred_tags: list) -> tuple:
     print(f"  Tags: {', '.join(existing_tags[:6]) or '(none)'}")
     if inferred:
         print(f"  Suggested: {', '.join(inferred[:4])}")
-    key = get_key("  Tags OK? [y/n]: ")
+    key = get_key("  Tags OK? [y/1=yes, n/2=no]: ")
     print()
-    if key == "n":
+    if key in ("n", "2"):
         return existing_tags, True  # existing tags stored, flagged for review
     return existing_tags, False  # existing tags stored, considered correct
 
@@ -287,8 +287,8 @@ def main():
     coll_lookup[-1] = "Unsorted"
     coll_lookup[0] = "Unsorted"
 
-    print("Controls: [y]es / [1-5] pick option / [n]o (type name) / [s]kip / [q]uit / [d]one", flush=True)
-    print("          After confirming collection, you can review and fix tags.\n", flush=True)
+    print("Controls: [1] quick-confirm (skip tag review)  [y] confirm + review tags", flush=True)
+    print("          [2-5] alternative collection  [n] type name  [s]kip  [q]uit  [d]one\n", flush=True)
 
     for idx, r in enumerate(candidates):
         rid = r["_id"]
@@ -331,10 +331,30 @@ def main():
 
         # Prompt
         while True:
-            key = get_key("\n  Confirm? [y/1-5/n/s/q/d]: ")
+            key = get_key("\n  Confirm? [1/2-5/y/n/s/q/d]: ")
+
+            if key == "1":
+                # Quick-confirm: accept current collection + tags, no tag review
+                entry = {
+                    "raindrop_id": rid,
+                    "title": title[:200],
+                    "domain": domain,
+                    "confirmed_collection_id": coll_id,
+                    "confirmed_collection_title": coll_name,
+                    "confirmed_tags": tags,
+                    "tags_need_review": False,
+                    "verified_by": "user",
+                    "verified_at": datetime.now(timezone.utc).isoformat(),
+                }
+                holdout["entries"].append(entry)
+                completed += 1
+                save_holdout(holdout)
+                clear_line()
+                print(f" ✅  ({completed}/{total})")
+                break
 
             if key == "y":
-                # Tag review
+                # Tag review before saving
                 inferred = infer_tags(title, domain)
                 final_tags, tags_need_review = tag_review_prompt(tags, inferred)
                 entry = {
@@ -370,7 +390,7 @@ def main():
                     pick = int(key2) - 1
                     if pick < len(suggestions):
                         _, alt_id, alt_title = suggestions[pick]
-                        # Tag review
+                        # User already opted into review via 'n' — always check tags
                         inferred = infer_tags(title, domain)
                         final_tags, tags_need_review = tag_review_prompt(tags, inferred)
                         entry = {
