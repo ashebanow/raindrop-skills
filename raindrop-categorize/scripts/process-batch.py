@@ -484,19 +484,26 @@ def process_comparison(bookmark: dict) -> str:
         else:
             phase_ok = False
 
-    # 3c: Tag update
-    tag_result = api("PUT", f"/raindrop/{rid}", {"tags": inferred_tags})
-    if tag_result and tag_result.get("result"):
-        log_entry("update_raindrop", {
-            "raindrop_id": rid,
-            "title": title[:80],
-            "fields_changed": ["tags"],
-            "tags": inferred_tags,
-            "phase": "comparison",
-            "precision_score": _precision_score,
-        })
-    else:
-        phase_ok = False
+    # 3c: Tag merge (never remove existing tags)
+    existing_real = [t for t in existing_tags if t != TRACKING_TAG]
+    merged_tags = list(existing_real)
+    for t in inferred_tags:
+        if t not in merged_tags and len(merged_tags) < MAX_TAGS:
+            merged_tags.append(t)
+
+    if set(merged_tags) != set(existing_real):
+        tag_result = api("PUT", f"/raindrop/{rid}", {"tags": merged_tags})
+        if tag_result and tag_result.get("result"):
+            log_entry("update_raindrop", {
+                "raindrop_id": rid,
+                "title": title[:80],
+                "fields_changed": ["tags"],
+                "tags": merged_tags,
+                "phase": "comparison",
+                "precision_score": _precision_score,
+            })
+        else:
+            phase_ok = False
 
     if phase_ok:
         print(f"  ✓ {title[:50]} — improved ({verdict['overall_verdict']})", flush=True)
@@ -614,23 +621,38 @@ def process_one(bookmark: dict):
             else:
                 phase_3b_state = "failed"
 
-    # --- Phase 3c: real tags (without _categorized-v2) ---
-    result = api("PUT", f"/raindrop/{rid}", {"tags": real_tags})
-    if result and result.get("result"):
+    # --- Phase 3c: merge tags (never remove existing tags) ---
+    # Merge existing real tags with inferred tags. Existing tags are
+    # always preserved — the pipeline only adds missing tags, it never
+    # removes human-curated tags.
+    existing_real = [t for t in existing_tags if t != TRACKING_TAG]
+    merged_tags = list(existing_real)
+    for t in real_tags:
+        if t not in merged_tags and len(merged_tags) < MAX_TAGS:
+            merged_tags.append(t)
+
+    # Only write if the merged set actually differs (avoids unnecessary PUTs)
+    if set(merged_tags) != set(existing_real):
+        result = api("PUT", f"/raindrop/{rid}", {"tags": merged_tags})
+        if result and result.get("result"):
+            phase_3c_ok = True
+            if not DRY_RUN:
+                log_entry("update_raindrop", {
+                    "raindrop_id": rid,
+                    "title": title[:80],
+                    "fields_changed": ["tags"],
+                    "tags": merged_tags,
+                    "precision_score": _precision_score,
+                })
+        else:
+            phase_3c_ok = False
+    else:
+        # Tags unchanged — no API call needed, but still passes the gate
         phase_3c_ok = True
-        if not DRY_RUN:
-            log_entry("update_raindrop", {
-                "raindrop_id": rid,
-                "title": title[:80],
-                "fields_changed": ["tags"],
-                "tags": real_tags,
-                "precision_score": _precision_score,
-            })
 
     # --- Phase 3d: tracking tag (only if 3a, 3b-or-skipped, 3c all succeeded) ---
     if phase_3a_ok and phase_3b_state in ("skipped", "matched") and phase_3c_ok:
-        final_tags = real_tags + [TRACKING_TAG]
-        result = api("PUT", f"/raindrop/{rid}", {"tags": final_tags})
+        final_tags = merged_tags + [TRACKING_TAG]
         if result and result.get("result"):
             if not DRY_RUN:
                 log_entry("update_raindrop", {
