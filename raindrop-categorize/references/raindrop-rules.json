@@ -13,7 +13,7 @@
     },
     {
       "id": "coll-programming",
-      "keywords": ["programming", "code", "git", "github", "golang", "rust", "python", "javascript"],
+      "keywords": ["programming", "code", "git", "golang", "rust", "python", "javascript"],
       "collection_id": 70857519,
       "collection_title": "Programming",
       "weight": 1.0
@@ -134,7 +134,7 @@
     "javascript": ["javascript", "js", "node", "nodejs", "typescript", "ts"],
     "dotfiles": ["dotfile", "dotfiles", "chezmoi"],
     "neovim": ["neovim", "nvim"],
-    "git": ["git", "github"],
+    "git": ["git"],
     "terminal": ["terminal", "shell", "zsh", "bash", "fish"],
     "hyprland": ["hyprland"],
     "wayland": ["wayland", "wlroots"],
