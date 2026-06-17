@@ -133,12 +133,25 @@ def infer_real_tags(title: str, domain: str, rich_text: Optional[str] = None) ->
                 if len(matched) >= MAX_TAGS:
                     break
     else:
-        # Binary matching against title + domain only (existing behavior)
+        # Binary matching with word-boundary awareness
+        # Short keywords like "nix" (3 chars) should not match inside
+        # "nixos" or "nixpkgs". Use word-boundary regex to ensure the
+        # keyword appears as a standalone word, not as a substring.
         for tag_name, keywords in TAG_KEYWORDS.items():
             for kw in keywords:
-                if kw in text and tag_name not in matched:
-                    matched.append(tag_name)
+                if tag_name in matched:
                     break
+                # Multi-word keywords (e.g. "open source") use substring match
+                if " " in kw:
+                    if kw in text:
+                        matched.append(tag_name)
+                        break
+                else:
+                    # Word-boundary match — prevents "nix" matching "nixos"
+                    pattern = r"(?<![a-zA-Z])" + re.escape(kw) + r"(?![a-zA-Z])"
+                    if re.search(pattern, text):
+                        matched.append(tag_name)
+                        break
             if len(matched) >= MAX_TAGS:
                 break
 
