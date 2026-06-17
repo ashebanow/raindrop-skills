@@ -150,7 +150,7 @@
     "fedora": ["fedora", "ublue", "silverblue", "bluefin", "bazzite"],
     "arch-linux": ["arch linux", "archlinux"],
     "database": ["database", "postgres", "postgresql", "sql", "mysql", "sqlite"],
-    "opensource": ["open source", "opensource", "oss"],
+    "opensource": ["opensource", "oss"],
     "programming": ["programming", "code", "software development"],
     "frontend": ["frontend", "css", "html", "ui", "react", "svelte", "vue"],
     "gaming": ["gaming", "game", "steam", "bg3", "diablo", "baldurs gate"],
