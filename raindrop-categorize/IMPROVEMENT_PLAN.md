@@ -21,7 +21,9 @@
 | **5c** | Frequency-weighted tag scoring | ✅ Complete | `infer_real_tags()` uses `MIN_OCCURRENCES=2` on rich text: counts keyword occurrences across page body, only suggests tags exceeding threshold. Falls back to binary matching when no page content. |
 | **5d** | Collection from page content | ✅ Complete | `find_collection()` uses frequency scoring on rich text: scores all 16 collection rules by total keyword occurrences, title matches get 2x bonus, minimum score of 2. Falls back to first-match-wins when no page content. |
 | **5e** | Domain blacklist | ✅ Complete | Inline in `should_fetch_url()`. Wikipedia, GitHub, Reddit, YouTube, Discord, Twitter, Instagram, Facebook, TikTok — skipped for both fetching and fingerprint accumulation. |
-| **4** | Rule proposal lifecycle | ⏳ Pending | Auto-approval, merge workflow, kanban integration, safety-valve auto-revert. |
+| **4a+4b** | Auto-approval rules + merge workflow | ✅ Complete | `scripts/apply-proposals.py` with `--dry-run`, `--auto-approve`, `apply <id>` modes. Checks 4 criteria: add_keyword type, ≥5 domain cluster, collection ≥20 bookmarks, no holdout regression. Stores snapshots for revert. |
+| **4d+4e** | Safety-valve revert | ✅ Complete | `scripts/revert-regression.py` checks approved proposals against holdout; reverts if accuracy dropped >10%. Wired into cron orchestrator at start of every run. |
+| **4c** | Kanban card integration | 📝 Deferred | Non-auto-approved proposals remain in `raindrop-proposals.json` for manual `apply <id>` approval. Kanban card creation requires Hermes kanban tools not available in this context. |
 
 ## Status Quo (June 2026)
 

@@ -46,6 +46,7 @@ SCAN_SCRIPT = SKILL_DIR / "scripts" / "scan-batch.py"
 PROCESS_SCRIPT = SKILL_DIR / "scripts" / "process-batch.py"
 SUGGEST_SCRIPT = SKILL_DIR / "scripts" / "suggest-rules.py"
 VERIFY_SCRIPT = SKILL_DIR / "scripts" / "verify-holdout.py"
+REVERT_SCRIPT = SKILL_DIR / "scripts" / "revert-regression.py"
 
 ENV_PATH = Path("/Users/ashebanow/Development/ai/raindrop-skills/.env")
 
@@ -492,6 +493,19 @@ def main() -> int:
 
     load_env()
 
+    # 0. Safety valve — revert regressive rule changes before scanning
+    revert_rc, revert_out, revert_err = run_subprocess(
+        ["python3", str(REVERT_SCRIPT)], timeout=30
+    )
+    revert_lines = [
+        l for l in revert_out.splitlines()
+        if l.startswith("REVERTED:")
+    ]
+    revert_skips = [
+        l for l in revert_out.splitlines()
+        if l.startswith("REVERT_SKIP:") or l.startswith("REVERT_ERROR:")
+    ]
+
     # 1. Prune
     _kept, removed = prune_audit_log()
 
@@ -668,6 +682,16 @@ def main() -> int:
 
     if not items:
         items.append("✅ None — library is in good shape.")
+
+    # Prepend revert results to action items if any reversion occurred
+    if revert_lines:
+        for line in revert_lines:
+            # Parse "REVERTED: coll-docker — verification dropped 92% → 78%"
+            part = line[len("REVERTED: "):]
+            items.insert(0, f"⏪ **Reverted 1 rule change:** {part}")
+    if revert_skips:
+        for line in revert_skips[:2]:  # cap at 2 to stay under Discord budget
+            items.insert(0, f"⚠️  **Safety-valve skip:** {line}")
 
     actions_block = "\n".join(f"- {it}" for it in items)
 
