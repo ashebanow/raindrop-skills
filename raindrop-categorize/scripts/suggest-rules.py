@@ -128,12 +128,17 @@ def keyword_clustering(entries: list) -> dict:
         "was", "were", "been", "get", "not", "you", "your", "our", "their",
         "its", "all", "how", "why", "what", "when", "where", "who",
         "install", "setup", "guide", "review", "new", "free", "best", "top",
+        # URL protocol / browser noise — never useful for categorization
+        "https", "http", "www", "com", "html", "php",
     }
     word_counts = Counter()
     entry_map = defaultdict(list)
     for entry in entries:
         title = entry[1] if len(entry) >= 2 else ""
         if not title:
+            continue
+        # Skip entries where the title is a raw URL — they have no real keywords
+        if title.startswith("http"):
             continue
         words = set(re.findall(r"[a-zA-Z][a-zA-Z0-9]{2,}", title.lower()))
         significant = words - STOP_WORDS
@@ -206,6 +211,7 @@ def suggest_from_domain_clusters(clusters: dict, collections: list) -> list:
             "guessed_collection_id": guessed_collection["id"] if guessed_collection else None,
             "guessed_collection_title": guessed_collection["title"] if guessed_collection else f"Collection with '{suggested_keywords[0]}' in name",
             "status": "pending",
+            "completed_at": None,
             "source": "no_match_domain_cluster",
             "created": datetime.now(timezone.utc).isoformat(),
         }
@@ -214,7 +220,13 @@ def suggest_from_domain_clusters(clusters: dict, collections: list) -> list:
 
 
 def suggest_from_keyword_clusters(clusters: dict) -> list:
-    """Generate rule suggestions from keyword clusters (entries without domains)."""
+    """Generate rule suggestions from keyword clusters (entries without domains).
+
+    NOTE: These proposals use "(title keyword)" as a placeholder domain, which
+    means they can never pass auto-approval (is_real_domain check in
+    apply-proposals.py). They are informational only — a human must review
+    and either reject them or convert them into proper domain-based proposals.
+    """
     proposals = []
     for word, info in sorted(clusters.items(), key=lambda x: -x[1]["count"]):
         count = info["count"]
@@ -232,6 +244,7 @@ def suggest_from_keyword_clusters(clusters: dict) -> list:
             "guessed_collection_id": None,
             "guessed_collection_title": None,
             "status": "pending",
+            "completed_at": None,
             "source": "no_match_keyword_cluster",
             "created": datetime.now(timezone.utc).isoformat(),
         }
@@ -265,6 +278,7 @@ def load_confidence_domain_suggestions() -> list:
                 "match_count": hits,
                 "matched_collections": matched_collections,
                 "status": "pending",
+                "completed_at": None,
                 "source": "confidence_file_domain",
                 "created": datetime.now(timezone.utc).isoformat(),
             })
@@ -300,16 +314,40 @@ def main():
     confidence_proposals = load_confidence_domain_suggestions()
     print(f"  → {len(confidence_proposals)} confidence-based suggestions.", flush=True)
 
-    # 4. Merge with existing proposals (deduplicate by domain)
+    # 4. Merge with existing proposals (deduplicate by ID and by semantic fingerprint)
     all_proposals = domain_proposals + keyword_proposals + confidence_proposals
     existing = load_proposals()
     existing_ids = {p["id"] for p in existing.get("proposals", [])}
+    # Build a fingerprint set from existing proposals to catch semantically
+    # identical suggestions that get different IDs (e.g., same keyword from
+    # different runs). Fingerprint = (source, domain, suggested_keywords tuple)
+    existing_fingerprints = set()
+    for p in existing.get("proposals", []):
+        fp = (
+            p.get("source"),
+            p.get("domain"),
+            tuple(sorted(p.get("suggested_keywords", []))),
+        )
+        existing_fingerprints.add(fp)
     new_count = 0
+    skipped_dupes = 0
     for p in all_proposals:
-        if p["id"] not in existing_ids:
-            existing.setdefault("proposals", []).append(p)
-            existing_ids.add(p["id"])
-            new_count += 1
+        if p["id"] in existing_ids:
+            continue
+        fp = (
+            p.get("source"),
+            p.get("domain"),
+            tuple(sorted(p.get("suggested_keywords", []))),
+        )
+        if fp in existing_fingerprints:
+            skipped_dupes += 1
+            continue
+        existing.setdefault("proposals", []).append(p)
+        existing_ids.add(p["id"])
+        existing_fingerprints.add(fp)
+        new_count += 1
+    if skipped_dupes:
+        print(f"  → {skipped_dupes} duplicate suggestions skipped (already exist in proposals).", flush=True)
 
     if new_count > 0:
         save_proposals(existing)

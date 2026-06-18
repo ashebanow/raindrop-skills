@@ -419,6 +419,7 @@ def do_auto_approve(dry_run: bool = False):
 
     for proposal in pending:
         pid = proposal.get("id", "?")
+        ptype = proposal.get("type", "?")
         approved, reasons = check_auto_approval(proposal, coll_counts)
 
         if approved:
@@ -426,9 +427,10 @@ def do_auto_approve(dry_run: bool = False):
             print(f"\n  ✅ [{pid}] AUTO-APPROVE", flush=True)
         else:
             failing.append(proposal)
-            # Only print reason summary for interesting cases
-            if proposal.get("type") == "add_keyword":
+            if ptype == "add_keyword":
                 print(f"\n  ❌ [{pid}] REJECTED: {'; '.join(reasons)}", flush=True)
+            else:
+                print(f"\n  ⏭️  [{pid}] SKIPPED (type '{ptype}' — auto-approve only handles 'add_keyword')", flush=True)
 
     print(f"\n{'='*60}", flush=True)
     print(f"Qualifying proposals: {len(qualifying)}/{len(pending)}", flush=True)
@@ -460,6 +462,7 @@ def do_auto_approve(dry_run: bool = False):
             if p["id"] == proposal["id"]:
                 p["status"] = "auto_approved"
                 p["applied_at"] = datetime.now(timezone.utc).isoformat()
+                p["completed_at"] = datetime.now(timezone.utc).isoformat()
                 p["snapshot"] = {
                     "previous_keywords": list(rule_entry.get("keywords", [])),
                     "previous_version": rules.get("version", 0),
@@ -533,6 +536,7 @@ def do_apply_specific(proposal_id: str):
         if p["id"] == proposal_id:
             p["status"] = "applied"
             p["applied_at"] = datetime.now(timezone.utc).isoformat()
+            p["completed_at"] = datetime.now(timezone.utc).isoformat()
             break
     proposals_data["proposals"] = all_proposals
     save_proposals(proposals_data)
