@@ -10,6 +10,11 @@ Modes:
   --dry-run         Show what would be approved without applying anything
   apply <id>        Apply a specific proposal (bypasses auto-approval checks)
 
+Supported proposal types:
+  add_keyword       Merge keywords into raindrop-rules.json
+  merge_collection  Move all bookmarks from source collection into target
+  move_collection   Reparent a collection under a new parent
+
 Auto-approval criteria (ALL must be true):
   1. Proposal type is ``add_keyword``
   2. Evidence from ≥5 no-match bookmarks sharing the same domain
@@ -44,7 +49,7 @@ RULES_PATH = os.path.join(_repo_root, "raindrop-categorize", "references", "rain
 VERIFY_SCRIPT = os.path.join(_repo_root, "raindrop-categorize", "scripts", "verify-holdout.py")
 
 sys.path.insert(0, os.path.join(_repo_root, "shared"))
-from raindrop_common import api_get, load_rules
+from raindrop_common import api_get, api_put, load_rules, fetch_all_raindrops
 
 # How much (as fraction of previous accuracy) constitutes a "regression"
 REGRESSION_THRESHOLD = 0.10  # 10%+ drop triggers regression flag
@@ -380,6 +385,234 @@ def run_verify_holdout() -> dict:
         return {}
 
 
+# ── Collection resolution helpers ───────────────────────────────────
+
+def _fetch_all_collections_tree() -> dict:
+    """Fetch all collections and return a tree for path resolution.
+
+    Returns dict with:
+        by_id: {cid: {title, parent_id, count}}
+        by_title: {lower_title: [{cid, parent_id, title}, ...]}  # list for ambig
+    """
+    roots = api_get("/collections")
+    children = api_get("/collections/childrens")
+    all_colls = []
+    if roots and "items" in roots:
+        all_colls.extend(roots["items"])
+    if children and "items" in children:
+        all_colls.extend(children["items"])
+
+    by_id = {}
+    by_title = {}
+    for c in all_colls:
+        cid = c["_id"]
+        title = c.get("title", "")
+        parent = c.get("parent", {}) or {}
+        pid = parent.get("$id")
+        entry = {"cid": cid, "title": title, "parent_id": pid, "count": c.get("count", 0)}
+        by_id[cid] = entry
+        key = title.lower().strip()
+        by_title.setdefault(key, []).append(entry)
+    return {"by_id": by_id, "by_title": by_title}
+
+
+def _resolve_collection_path(path: str, tree: dict) -> int:
+    """Resolve a path like "Parent > Child" to a collection ID.
+
+    The last segment is the collection title. Earlier segments
+    are the parent chain used for disambiguation.
+
+    Returns collection ID (int) or raises ValueError.
+    """
+    segments = [s.strip() for s in path.split(">")]
+    target_title = segments[-1]
+    expected_parents = segments[:-1]
+
+    by_title = tree["by_title"]
+    by_id = tree["by_id"]
+
+    candidates = by_title.get(target_title.lower(), [])
+    if not candidates:
+        raise ValueError(f"No collection found with title '{target_title}'")
+
+    if len(candidates) == 1:
+        # Single match — verify parent chain if expected
+        c = candidates[0]
+        if expected_parents:
+            _verify_parent_chain(c, expected_parents, by_id)
+        return c["cid"]
+
+    # Multiple matches — disambiguate by parent chain
+    for c in candidates:
+        try:
+            _verify_parent_chain(c, expected_parents, by_id)
+            return c["cid"]  # first match wins
+        except ValueError:
+            continue
+
+    raise ValueError(
+        f"Could not resolve '{path}': found {len(candidates)} collections "
+        f"named '{target_title}' but none match the expected parent chain"
+    )
+
+
+def _verify_parent_chain(entry: dict, expected_parents: list, by_id: dict):
+    """Walk up the parent chain and verify each segment matches.
+
+    Raises ValueError on mismatch.
+    """
+    current = entry
+    for expected in reversed(expected_parents):
+        pid = current.get("parent_id")
+        if pid is None:
+            raise ValueError(f"Collection '{entry['title']}' has no parent, expected '{expected}'")
+        parent = by_id.get(pid)
+        if not parent:
+            raise ValueError(f"Parent {pid} not found in tree")
+        if parent["title"].lower().strip() != expected.lower().strip():
+            raise ValueError(
+                f"Expected parent '{expected}', got '{parent['title']}' "
+                f"(id={pid})"
+            )
+        current = parent
+
+
+def _path_parent(path: str) -> str:
+    """Return the parent portion of a path, e.g.
+    "Linux & Open Source > NixOS > NixOS Tutorials" -> "Linux & Open Source > NixOS"
+    """
+    segments = [s.strip() for s in path.split(">")]
+    return " > ".join(segments[:-1])
+
+
+def _path_tail(path: str) -> str:
+    """Return the last segment of a path, e.g.
+    "Linux & Open Source > NixOS Tutorials" -> "NixOS Tutorials"
+    """
+    return path.split(">")[-1].strip()
+
+
+# ── Collection operation handlers ───────────────────────────────────
+
+def do_apply_merge_collection(proposal: dict) -> bool:
+    """Move all bookmarks from source_collection to target_collection.
+
+    Does NOT delete the source collection (per SKILL.md rules).
+    Returns True on success, False on failure.
+    """
+    source_path = proposal.get("source_collection")
+    target_path = proposal.get("target_collection")
+
+    if not source_path or not target_path:
+        print(f"  ⚠ Proposal missing source_collection or target_collection", flush=True)
+        return False
+
+    print(f"  Resolving collections...", flush=True)
+    tree = _fetch_all_collections_tree()
+
+    try:
+        source_id = _resolve_collection_path(source_path, tree)
+        target_id = _resolve_collection_path(target_path, tree)
+    except ValueError as e:
+        print(f"  ❌ Could not resolve collection: {e}", flush=True)
+        return False
+
+    source_title = tree["by_id"][source_id]["title"]
+    target_title = tree["by_id"][target_id]["title"]
+    print(f"    Source: [{source_id}] {source_title}", flush=True)
+    print(f"    Target: [{target_id}] {target_title}", flush=True)
+
+    if source_id == target_id:
+        print(f"  ⚠ Source and target are the same collection — nothing to do.", flush=True)
+        return False
+
+    # Fetch all bookmarks from source
+    print(f"  Fetching bookmarks from source...", flush=True)
+    bookmarks = fetch_all_raindrops(source_id)
+    if not bookmarks:
+        print(f"  ℹ Source collection is empty — nothing to move.", flush=True)
+        return True
+
+    ids = [b["_id"] for b in bookmarks]
+    print(f"  Moving {len(ids)} bookmark(s) to target...", flush=True)
+
+    # Individual updates (Raindrop API has no batch move endpoint)
+    success = 0
+    for bm in bookmarks:
+        r = api_put(f"/raindrop/{bm['_id']}", {"collection": {"$id": target_id}})
+        if r:
+            success += 1
+        time.sleep(0.1)
+
+    if success == len(ids):
+        print(f"  ✓ Moved {success} bookmark(s) from '{source_title}' to '{target_title}'", flush=True)
+        audit_log("merge_collection", {
+            "source_collection": source_path,
+            "source_id": source_id,
+            "target_collection": target_path,
+            "target_id": target_id,
+            "bookmarks_moved": success,
+        })
+        return True
+    else:
+        print(f"  ❌ Moved {success}/{len(ids)} bookmark(s) — some may remain in source", flush=True)
+        return False
+
+
+def do_apply_move_collection(proposal: dict) -> bool:
+    """Reparent a collection to a new parent.
+
+    Returns True on success, False on failure.
+    """
+    target_path = proposal.get("target_collection")
+    new_path = proposal.get("new_path")
+
+    if not target_path or not new_path:
+        print(f"  ⚠ Proposal missing target_collection or new_path", flush=True)
+        return False
+
+    parent_path = _path_parent(new_path)
+    if not parent_path:
+        print(f"  ⚠ new_path '{new_path}' has no parent (can't move to root)", flush=True)
+        return False
+
+    print(f"  Resolving collections...", flush=True)
+    tree = _fetch_all_collections_tree()
+
+    try:
+        coll_id = _resolve_collection_path(target_path, tree)
+        parent_id = _resolve_collection_path(parent_path, tree)
+    except ValueError as e:
+        print(f"  ❌ Could not resolve collection: {e}", flush=True)
+        return False
+
+    coll_title = tree["by_id"][coll_id]["title"]
+    parent_title = tree["by_id"][parent_id]["title"]
+    print(f"    Collection to move: [{coll_id}] {coll_title}", flush=True)
+    print(f"    New parent:         [{parent_id}] {parent_title}", flush=True)
+
+    if tree["by_id"][coll_id].get("parent_id") == parent_id:
+        print(f"  ℹ Collection is already under '{parent_title}' — nothing to do.", flush=True)
+        return True
+
+    # Reparent
+    print(f"  Reparenting...", flush=True)
+    result = api_put(f"/collection/{coll_id}", {"parent": {"$id": parent_id}})
+
+    if result and result.get("result"):
+        print(f"  ✓ Moved '{coll_title}' under '{parent_title}'", flush=True)
+        audit_log("move_collection", {
+            "collection": target_path,
+            "collection_id": coll_id,
+            "new_parent": parent_path,
+            "new_parent_id": parent_id,
+        })
+        return True
+    else:
+        print(f"  ❌ Failed to reparent collection", flush=True)
+        return False
+
+
 # ── Main logic ───────────────────────────────────────────────────────
 
 def do_auto_approve(dry_run: bool = False):
@@ -515,65 +748,72 @@ def do_apply_specific(proposal_id: str):
         print(f"ERROR: No proposal found with id '{proposal_id}'", file=sys.stderr)
         return 1
 
-    if proposal.get("type") != "add_keyword":
-        print(f"ERROR: Proposal '{proposal_id}' has type '{proposal.get('type')}', "
-              f"only 'add_keyword' proposals can be applied.", file=sys.stderr)
+    ptype = proposal.get("type")
+    print(f"Applying proposal [{proposal_id}] (type: {ptype})...", flush=True)
+
+    # ── Route by type ──
+
+    if ptype == "add_keyword":
+        rules = load_rules(RULES_PATH) if os.path.exists(RULES_PATH) else {}
+        if not rules:
+            print("ERROR: Could not load rules file.", file=sys.stderr)
+            return 1
+
+        rules = apply_proposal(proposal, rules)
+        save_rules(rules)
+
+        # Snapshot for revert-regression
+        rule_entry = None
+        for entry in rules.get("collection_keywords", []):
+            if entry.get("id") == proposal.get("rule_id"):
+                rule_entry = entry
+                break
+        snapshot = {
+            "previous_keywords": list(rule_entry.get("keywords", [])) if rule_entry else [],
+            "previous_version": rules.get("version", 0),
+        }
+
+        print("  Running holdout verification for baseline...", flush=True)
+        verification = run_verify_holdout()
+        if verification:
+            snapshot["verification_before"] = verification
+            print(f"  Baseline: collection_accuracy={verification.get('collection_accuracy', '?'):.1%}", flush=True)
+
+        for p in all_proposals:
+            if p["id"] == proposal_id:
+                p["snapshot"] = snapshot
+                break
+
+        audit_log("apply", {
+            "proposal_id": proposal_id,
+            "mode": "manual_apply",
+            "type": "add_keyword",
+        })
+
+    elif ptype == "merge_collection":
+        if not do_apply_merge_collection(proposal):
+            return 1
+
+    elif ptype == "move_collection":
+        if not do_apply_move_collection(proposal):
+            return 1
+
+    else:
+        print(f"ERROR: Unknown proposal type '{ptype}'. Supported types: "
+              f"add_keyword, merge_collection, move_collection", file=sys.stderr)
         return 1
 
-    print(f"Applying proposal [{proposal_id}]...", flush=True)
-
-    # Load and apply
-    rules = load_rules(RULES_PATH) if os.path.exists(RULES_PATH) else {}
-    if not rules:
-        print("ERROR: Could not load rules file.", file=sys.stderr)
-        return 1
-
-    rules = apply_proposal(proposal, rules)
-    save_rules(rules)
-
-    # Update proposal status
+    # Mark as applied
+    now = datetime.now(timezone.utc).isoformat()
     for p in all_proposals:
         if p["id"] == proposal_id:
             p["status"] = "applied"
-            p["applied_at"] = datetime.now(timezone.utc).isoformat()
-            p["completed_at"] = datetime.now(timezone.utc).isoformat()
+            p["applied_at"] = now
+            p["completed_at"] = now
             break
+
     proposals_data["proposals"] = all_proposals
     save_proposals(proposals_data)
-
-    # Store snapshot for revert-regression
-    rule_entry = None
-    for entry in rules.get("collection_keywords", []):
-        if entry.get("id") == proposal.get("rule_id"):
-            rule_entry = entry
-            break
-    for p in all_proposals:
-        if p["id"] == proposal_id:
-            p["snapshot"] = {
-                "previous_keywords": list(rule_entry.get("keywords", [])) if rule_entry else [],
-                "previous_version": rules.get("version", 0),
-            }
-            break
-    proposals_data["proposals"] = all_proposals
-    save_proposals(proposals_data)
-
-    # Run holdout verification for baseline
-    print("  Running holdout verification for baseline...", flush=True)
-    verification = run_verify_holdout()
-    if verification:
-        for p in all_proposals:
-            if p["id"] == proposal_id:
-                p["snapshot"]["verification_before"] = verification
-                break
-        proposals_data["proposals"] = all_proposals
-        save_proposals(proposals_data)
-        print(f"  Baseline: collection_accuracy={verification.get('collection_accuracy', '?'):.1%}", flush=True)
-
-    # Audit
-    audit_log("apply", {
-        "proposal_id": proposal_id,
-        "mode": "manual_apply",
-    })
 
     print(f"✓ Applied proposal [{proposal_id}].", flush=True)
     return 0
