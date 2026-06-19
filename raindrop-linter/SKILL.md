@@ -188,13 +188,60 @@ Action: review and either delete or update the URL.
 
 ## Cron Setup
 
-Run weekly (or daily for aggressive linting):
+The cron path uses a deterministic Python orchestrator instead of an LLM agent.
+This avoids the idle-timeout and response-capture failures that affect agent-driven
+cron runs.
+
+**Setup:**
+
+1. Ensure the orchestrator script is deployed to `~/.hermes/skills/raindrop-linter/scripts/cron_run.py`
+   (this is done automatically by `deploy-skills.sh`).
+2. Create the cron job:
 
 ```bash
 hermes cron create \
-  --schedule "0 9 * * 1" \
-  --prompt "Run the raindrop-linter skill on the full library. Check for duplicates, near-duplicates, malformed URLs, and 20 dead URLs. Create kanban cards for all issues found on the raindrop-lint board." \
+  --schedule "0 10 * * 1" \
+  --name "raindrop-linter-weekly" \
+  --no-agent \
+  --script "raindrop_linter_cron.py" \
+  --prompt "Deterministic orchestrator — script stdout is delivered verbatim." \
   --skills raindrop-linter
+```
+
+If the wrapper script is missing from `~/.hermes/scripts/`, create it:
+
+```bash
+cat > ~/.hermes/scripts/raindrop_linter_cron.py << 'EOF'
+"""Wrapper for hermes cron --no-agent mode."""
+import runpy, os, sys
+sys.path.insert(0, os.path.expanduser("~/.hermes/skills/raindrop-linter/scripts"))
+runpy.run_path(os.path.expanduser(
+    "~/.hermes/skills/raindrop-linter/scripts/cron_run.py"
+), run_name="__main__")
+EOF
+```
+
+**What the orchestrator does:**
+
+| Phase | What runs |
+|---|---|
+| All | `raindrop_linter.py lint --limit 50` — fetches all bookmarks, checks duplicates,
+  near-duplicates, malformed URLs, and up to 50 dead URLs (oldest-first) |
+| Summary | Parses script output and produces a compact action-focused report |
+
+**Output format (delivered verbatim to Discord):**
+
+```
+## Raindrop Linter — Run `20260619-001551`
+**Started:** 2026-06-19T00:15:51Z
+
+**Pipeline:** dups 0 groups (0 to remove), malformed 0, dead 0 checked (0 dead, cursor 1762873827)  ·  85s  ·  ✅ ok
+
+**Action items:**
+- No issues found. Library is clean.
+
+---
+_raindrop-linter completed in 85s_
 ```
 
 ## Dependencies
