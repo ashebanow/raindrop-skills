@@ -15,7 +15,10 @@ again on the next run (it's still missing whatever the failed phase was
 supposed to write, so it remains eligible per scan-batch.py's filter).
 
 Usage:
-  source .env && export RAINDROP_TOKEN && python3 scripts/process-batch.py [--dry-run]
+  source .env && export RAINDROP_TOKEN && python3 scripts/process-batch.py [--dry-run] [--limit N]
+
+  --dry-run   Log inferences without making any API calls.
+  --limit N   Process at most N bookmarks (default: from rules thresholds.batch_limit or 50).
 
 State file (from scan-batch.py): ~/.hermes/cache/raindrop-state.json
 Audit log: ~/.hermes/cache/raindrop-audit-log.jsonl
@@ -38,13 +41,17 @@ from raindrop_common import (
     api as _api,
     compute_precision_score,
     detect_note_template as _detect_note_template_shared,
+    fetch_page_cached,
     fetch_page_content,
     load_rules as _load_rules,
     query_domain_fingerprint,
     should_fetch_url,
+    start_fetcher_pool,
     TRACKING_TAG,
     update_domain_fingerprint,
 )
+
+
 
 # Re-export api for local use (preserves backward compat within this file)
 api = _api
@@ -55,6 +62,16 @@ LOG_PATH = f"{CACHE}/raindrop-audit-log.jsonl"
 NO_MATCH_PATH = f"{CACHE}/raindrop-no-match.json"
 CONFIDENCE_PATH = f"{CACHE}/raindrop-confidence.json"
 DRY_RUN = "--dry-run" in sys.argv
+
+# Parse optional --limit N argument (default: _BATCH_LIMIT from rules)
+_BATCH_LIMIT_OVERRIDE = None
+for i, arg in enumerate(sys.argv):
+    if arg == "--limit" and i + 1 < len(sys.argv):
+        try:
+            _BATCH_LIMIT_OVERRIDE = int(sys.argv[i + 1])
+        except ValueError:
+            pass
+        break
 
 RUN_ID = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S%f")
 
@@ -92,6 +109,9 @@ API_RETRIES = thresholds.get("api_retries", 3)
 API_TIMEOUT = thresholds.get("api_timeout_s", 15)
 RATE_LIMIT_DELAY = thresholds.get("rate_limit_delay_s", 0.25)
 MIN_OCCURRENCES = thresholds.get("min_occurrences", 2)  # min keyword occurrences in rich text to suggest a tag
+
+# Default batch limit (overridable via --limit N)
+_BATCH_LIMIT = thresholds.get("batch_limit", 50)
 
 print(f"Loaded {len(COLLECTION_KEYWORD_MAP)} collection rules, "
       f"{len(TAG_KEYWORDS)} tag keyword groups, "
@@ -490,8 +510,8 @@ def process_comparison(bookmark: dict) -> str:
     existing_coll = bookmark.get("collection") or {}
     existing_coll_id = existing_coll.get("$id")
 
-    # Fetch page content for richer inference
-    page_content = fetch_page_content(link)
+    # Fetch page content for richer inference (cached per URL)
+    page_content = fetch_page_cached(link)
     rich_text = None
     if page_content and page_content.get("body_text"):
         rich_text = (title + " " + (domain or "") + " "
@@ -666,8 +686,8 @@ def process_one(bookmark: dict):
     if TRACKING_TAG in existing_tags:
         return process_comparison(bookmark)
 
-    # Fetch page content for richer inference
-    page_content = fetch_page_content(link)
+    # Fetch page content for richer inference (cached per URL)
+    page_content = fetch_page_cached(link)
     rich_text = None
     if page_content and page_content.get("body_text"):
         rich_text = (title + " " + (domain or "") + " "
@@ -807,23 +827,27 @@ def process_one(bookmark: dict):
     if phase_3a_ok and phase_3b_state in ("skipped", "matched") and phase_3c_ok:
         final_tags = merged_tags + [TRACKING_TAG]
         if result and result.get("result"):
-            if not DRY_RUN:
-                log_entry("update_raindrop", {
-                    "raindrop_id": rid,
-                    "title": title[:80],
-                    "fields_changed": ["tags"],
-                    "tags": final_tags,
-                    "tracking_tag_added": True,
-                    "precision_score": _precision_score,
-                })
-            return "tagged"
+            # Actually PUT the tracking tag (was only logging before — bug fix)
+            tag_result = api("PUT", f"/raindrop/{rid}", {"tags": final_tags})
+            if tag_result and tag_result.get("result"):
+                if not DRY_RUN:
+                    log_entry("update_raindrop", {
+                        "raindrop_id": rid,
+                        "title": title[:80],
+                        "fields_changed": ["tags"],
+                        "tags": final_tags,
+                        "tracking_tag_added": True,
+                        "precision_score": _precision_score,
+                    })
+                return "tagged"
 
     return "deferred"
 
 
 def main() -> int:
     state = load_state()
-    final = state.get("final_list", [])[:100]
+    limit = _BATCH_LIMIT_OVERRIDE if _BATCH_LIMIT_OVERRIDE is not None else _BATCH_LIMIT
+    final = state.get("final_list", [])[:limit]
     total = len(final)
 
     t0 = time.time()
@@ -832,6 +856,11 @@ def main() -> int:
 
     mode = " (DRY RUN)" if DRY_RUN else ""
     print(f"Processing {total} bookmarks{mode}...", flush=True)
+
+    # Background fetcher pool: 5 workers keep ahead of the processing loop
+    all_urls = [r.get("link", "") for r in final if r.get("link")]
+    if all_urls:
+        start_fetcher_pool(all_urls, num_workers=5)
 
     for i, r in enumerate(final):
         is_filler = TRACKING_TAG in (r.get("tags", []) or [])
@@ -844,9 +873,9 @@ def main() -> int:
                 process_comparison(r)
                 counts["compared"] += 1
             else:
-                # Dry-run inference for new bookmarks (include page content)
+                # Dry-run inference for new bookmarks (include page content, cached)
                 link = r.get("link", "")
-                page_content = fetch_page_content(link)
+                page_content = fetch_page_cached(link)
                 rich_text = None
                 if page_content and page_content.get("body_text"):
                     rich_text = (r.get("title", "") + " " + (r.get("domain", "") or "") + " "

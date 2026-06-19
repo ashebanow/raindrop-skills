@@ -11,7 +11,9 @@ Usage from any skill script:
 
 import json
 import os
+import queue as _queue
 import sys
+import threading
 import time
 from typing import Optional
 import urllib.error
@@ -697,3 +699,69 @@ def compute_precision_score(title, domain, url, assigned_collection_id, assigned
         "tag_precision": round(tag_precision, 2),
         "combined_score": round(combined, 1),
     }
+
+
+# ── Page content cache (shared between processing and background pool) ──
+
+PAGE_CACHE: dict[str, Optional[dict]] = {}  # url → fetched content or None
+_PAGE_CACHE_LOCK = threading.Lock()
+
+
+def fetch_page_cached(url: str, timeout: int = 3) -> Optional[dict]:
+    """Return page content from the shared cache; fetch on miss.
+
+    Thread-safe: background fetcher workers and the processing loop
+    both write to PAGE_CACHE under a lock.  The first writer wins
+    (via setdefault), so redundant work from races is discarded.
+
+    Args:
+        url: The URL to fetch.
+        timeout: Per-attempt timeout in seconds (default 3).
+
+    Returns:
+        Content dict or None on failure.
+    """
+    with _PAGE_CACHE_LOCK:
+        if url in PAGE_CACHE:
+            return PAGE_CACHE[url]
+    # Miss — fetch synchronously (background workers may be racing;
+    # redundant results are discarded by setdefault below).
+    result = fetch_page_content(url, timeout=timeout)
+    with _PAGE_CACHE_LOCK:
+        PAGE_CACHE.setdefault(url, result)
+    return result
+
+
+def start_fetcher_pool(urls: list[str], num_workers: int = 5) -> None:
+    """Start a pool of background fetcher threads consuming a URL queue.
+
+    Each worker pulls one URL at a time from a shared queue, fetches it,
+    and stores the result in PAGE_CACHE.  Workers exit when the queue is
+    exhausted.  The processing loop calls fetch_page_cached() which falls
+    through to a synchronous fetch on cache miss, so there is never a
+    hard dependency on the background pool.
+
+    Args:
+        urls: All bookmark URLs for this batch (duplicates are fine).
+        num_workers: Number of concurrent fetcher threads (default 5).
+    """
+    q: _queue.Queue = _queue.Queue()
+    for url in urls:
+        q.put(url)
+
+    def _worker():
+        while True:
+            try:
+                url = q.get_nowait()
+            except _queue.Empty:
+                return  # all URLs consumed, worker exits
+            result = fetch_page_content(url, timeout=3)
+            with _PAGE_CACHE_LOCK:
+                # setdefault: don't overwrite if the processing loop
+                # already fetched this URL synchronously
+                PAGE_CACHE.setdefault(url, result)
+
+    n = min(num_workers, len(urls))
+    for _ in range(n):
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()

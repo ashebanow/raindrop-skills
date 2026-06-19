@@ -230,7 +230,8 @@
     "quality_drop_consecutive_runs": 2,
     "rate_limit_delay_s": 0.25,
     "api_retries": 3,
-    "api_timeout_s": 15
+    "api_timeout_s": 15,
+    "batch_limit": 50
   },
 
   "metadata": {

@@ -572,9 +572,10 @@ def main() -> int:
         return 1
     scan_info = parse_scan_output(scan_out)
 
-    # 3. Process (Phase 3)
+    # 3. Process (Phase 3) — limit batch to 50 so it finishes within
+    #    Hermes's 900s no_agent cron timeout.
     proc_rc, proc_out, proc_err = run_subprocess(
-        ["python3", str(PROCESS_SCRIPT)], timeout=900
+        ["python3", str(PROCESS_SCRIPT), "--limit", "50"], timeout=800
     )
     ok, fail, compared_count, filler_count = parse_process_output(proc_out)
 
