@@ -120,6 +120,54 @@ def prune_audit_log() -> tuple[int, int]:
     return len(keep), removed
 
 
+def prune_no_match() -> tuple[int, int]:
+    """Remove no-match entries whose bookmarks are no longer unsorted.
+
+    Checks each entry in the no-match backlog: if the bookmark has been
+    assigned to a collection (or deleted), it's removed from the backlog.
+    Returns (kept, removed).
+    """
+    if not NO_MATCH_PATH.exists():
+        return 0, 0
+    try:
+        data = json.loads(NO_MATCH_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return 0, 0
+    if not isinstance(data, list):
+        return 0, 0
+
+    from raindrop_common import api_get
+
+    kept = []
+    removed = 0
+    for entry in data:
+        if not isinstance(entry, list) or len(entry) < 1:
+            kept.append(entry)
+            continue
+        rid = entry[0]
+        # Check if the bookmark still exists and is unsorted
+        result = api_get(f"/raindrop/{rid}")
+        if result and "item" in result:
+            item = result["item"]
+            coll = item.get("collection", {}) or {}
+            cid = coll.get("$id")
+            # Keep only if still unsorted (no collection, -1, or 0)
+            if cid in (None, -1, 0):
+                kept.append(entry)
+            else:
+                removed += 1
+        else:
+            # Bookmark was deleted — prune it
+            removed += 1
+        time.sleep(0.1)
+
+    NO_MATCH_PATH.write_text(
+        json.dumps(kept, indent=2) + "\n" if kept else "[]\n",
+        encoding="utf-8",
+    )
+    return len(kept), removed
+
+
 def run_subprocess(cmd: list[str], timeout: int = 600) -> tuple[int, str, str]:
     """Run a subprocess and return (returncode, stdout, stderr)."""
     try:
@@ -571,7 +619,7 @@ def main() -> int:
     else:
         proc_status = f"✅ {ok} tagged"
     pipeline = (
-        f"prune {removed} → "
+        f"prune {removed} audit + {nm_removed} no-match stale → "
         f"scan {scan_info['eligible']} eligible, batch {scan_info['batch']} → "
         f"process {proc_status}"
     )
