@@ -12,34 +12,57 @@ IMPORTANT: The Raindrop API silently caps perpage at 50, NOT 200.
 Output:
   ~/.hermes/cache/raindrop-state.json  — collections, tags, and final bookmark list
 """
-import json, os, urllib.request, time
+import json, os, sys, time
 from datetime import datetime, timezone, timedelta
 from collections import Counter
+from pathlib import Path
+
+# Shared module with retry-capable API
+_repo_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_repo_root / "shared"))
+from raindrop_common import api_get as _api_get
 
 CACHE = os.path.expanduser("~/.hermes/cache")
 STATE_PATH = f"{CACHE}/raindrop-state.json"
 CUTOFF_24H = datetime.now(timezone.utc) - timedelta(hours=24)
 
-token = os.environ.get("RAINDROP_TOKEN", "")
-if not token:
-    print("ERROR: RAINDROP_TOKEN not set")
-    exit(1)
-
 PERPAGE = 50  # Raindrop API caps at 50; do not change to 200
 
+
 def api(path):
-    req = urllib.request.Request(f"https://api.raindrop.io/rest/v1{path}",
-                                 headers={"Authorization": f"Bearer {token}"})
-    return json.loads(urllib.request.urlopen(req, timeout=15).read().decode())
+    """GET the given API path with retries and exponential backoff.
+
+    Delegates to the shared ``api_get()`` which already handles 3 retries
+    with exponential backoff, eliminating the single-timeout-kills-scan
+    failure mode.
+    """
+    # Split path and params for the shared api_get signature
+    if "?" in path:
+        path_part, qs = path.split("?", 1)
+        params = dict(p.split("=", 1) for p in qs.split("&"))
+        return _api_get(path_part, params=params)
+    return _api_get(path)
 
 t0 = time.time()
 
 # Phase 1: Collections + Tags
 print("Fetching collections...", flush=True)
-roots = api("/collections").get("items", [])
-children = api("/collections/childrens").get("items", [])
+try:
+    roots = api("/collections").get("items", [])
+except Exception as e:
+    print(f"  ERROR fetching root collections: {e}", flush=True)
+    roots = []
+try:
+    children = api("/collections/childrens").get("items", [])
+except Exception as e:
+    print(f"  ERROR fetching child collections: {e}", flush=True)
+    children = []
+try:
+    tags_data = api("/tags/0").get("items", [])
+except Exception as e:
+    print(f"  ERROR fetching tags: {e}", flush=True)
+    tags_data = []
 all_colls = roots + children
-tags_data = api("/tags/0").get("items", [])
 print(f"  {len(roots)} root + {len(children)} children = {len(all_colls)} | {len(tags_data)} tags", flush=True)
 
 # Phase 2: Scan collections sequentially (parallel causes 429 rate limits)
@@ -56,6 +79,9 @@ for idx, c in enumerate(non_empty):
     while True:
         try:
             data = api(f"/raindrops/{cid}?perpage={PERPAGE}&page={page}")
+            if data is None:
+                print(f"  ⚠ col[{cid}] page {page}: API returned None after retries", flush=True)
+                break
             items = data.get("items", [])
             if not items:
                 break
