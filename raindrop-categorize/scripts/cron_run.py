@@ -556,6 +556,7 @@ def main() -> int:
 
     # 1. Prune
     _kept, removed = prune_audit_log()
+    _nm_kept, nm_removed = prune_no_match()
 
     # 2. Scan (Phase 1+2)
     scan_rc, scan_out, scan_err = run_subprocess(
