@@ -27,6 +27,8 @@ Output budget: kept under ~1.5 KB so the framework's Discord wrapping
 ("Cronjob Response: …\n-------------\n\n" + footer) stays well under
 Discord's 2000-char per-message limit.
 """
+from __future__ import annotations
+
 import json
 import os
 import re
