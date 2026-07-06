@@ -320,8 +320,8 @@ def compute_quality_record(
     """
     timestamp = datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
-    # Parse process output for batch stats
-    _, _, compared_count, filler_count = parse_process_output(proc_out)
+    # Get tagged count from process output for quality scoring
+    ok, _, compared_count, filler_count = parse_process_output(proc_out)
 
     # Count improvements from process output lines
     # Lines like: "  ✓ title... — improved (better)"
@@ -330,7 +330,7 @@ def compute_quality_record(
         if " — improved " in line:
             compared_improvements += 1
 
-    # Read state file
+    # Read state file for per-collection data
     batch_size = 0
     tagged_count = 0
     empty_tags_count = 0
@@ -369,13 +369,9 @@ def compute_quality_record(
     except (OSError, json.JSONDecodeError):
         pass
 
-    # Compute completeness_pct: % of batch with non-empty tags AND note
-    completeness_pct = 0
-    if batch_size > 0:
-        non_empty = batch_size - max(empty_tags_count, empty_notes_count)
-        # A bookmark is "complete" if it has either tags or a note
-        complete = batch_size - (empty_tags_count if empty_tags_count < empty_notes_count else empty_notes_count)
-        completeness_pct = round(complete / batch_size * 100)
+    # Post-process completeness: % of batch that was fully processed
+    # (all 3 fields applied + _categorized-v2 tracking tag)
+    completeness_pct = round(ok / max(1, batch_size) * 100) if batch_size > 0 else 0
 
     # tagged_pct_delta: what % of the batch was newly tagged (vs already had tags)
     newly_tagged = batch_size - empty_tags_count - tagged_count
@@ -405,7 +401,7 @@ def compute_quality_record(
         "filler_count": filler_count,
         "success_rate_pct": 100 if proc_rc == 0 else 0,
         "global": {
-            "avg_per_raindrop": None,
+            "avg_per_raindrop": round(ok / max(1, batch_size) * 10, 1) if batch_size > 0 else 0.0,
             "completeness_pct": completeness_pct,
             "tagged_pct_delta": tagged_pct_delta,
             "note_pct_delta": note_pct_delta,
@@ -630,31 +626,31 @@ def main() -> int:
 
     # --- Format quality line ---
     if latest:
-        # Show batch stats from the latest record alongside trend
-        batch_info = (
-            f"batch: {latest.get('batch_size', 0)} total"
-        )
-        # Add tagged / compared breakdown if available
         g = latest.get("global", {})
+        completeness = g.get("completeness_pct", None)
         tagged_batch = latest.get("batch_size", 0) - latest.get("filler_count", 0)
         cmp_count = g.get("compared_count", 0)
         cmp_impr = g.get("compared_improvements", 0)
-        parts = []
+
+        # Build the run result snippet
+        result_parts = [f"{latest.get('batch_size', 0)} batch"]
         if tagged_batch > 0:
-            parts.append(f"{tagged_batch} tagged")
+            result_parts.append(f"{tagged_batch} tagged")
         if cmp_count > 0:
             impr = f" ({cmp_impr} improved)" if cmp_impr > 0 else ""
-            parts.append(f"{cmp_count} compared{impr}")
-        if parts:
-            batch_info += " — " + ", ".join(parts)
+            result_parts.append(f"{cmp_count} compared{impr}")
+        if completeness is not None:
+            result_parts.append(f"completeness {completeness}%")
+
+        result_str = ", ".join(result_parts)
 
         if stats:
             quality_line = (
                 f"mean {stats['mean']:.1f} / median {stats['median']:.1f} "
-                f"({stats['trend']}) — {batch_info}"
+                f"({stats['trend']}) — {result_str}"
             )
         else:
-            quality_line = f"{batch_info}"
+            quality_line = result_str
     else:
         quality_line = "n/a (no quality records yet)"
 
