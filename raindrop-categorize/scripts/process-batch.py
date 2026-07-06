@@ -56,6 +56,15 @@ from raindrop_common import (
 # Re-export api for local use (preserves backward compat within this file)
 api = _api
 
+# Gemini classifier (optional — falls back to keyword rules on failure/unavailable)
+try:
+    from gemini_classifier import classify_bookmark as _classify_bookmark
+    _HAS_GEMINI = True
+except ImportError:
+    _HAS_GEMINI = False
+    def _classify_bookmark(*args, **kwargs):
+        return None
+
 CACHE = os.path.expanduser("~/.hermes/cache")
 STATE_PATH = f"{CACHE}/raindrop-state.json"
 LOG_PATH = f"{CACHE}/raindrop-audit-log.jsonl"
@@ -112,6 +121,19 @@ MIN_OCCURRENCES = thresholds.get("min_occurrences", 1)  # min word-boundary keyw
 
 # Default batch limit (overridable via --limit N)
 _BATCH_LIMIT = thresholds.get("batch_limit", 50)
+
+# Tag descriptions for the Gemini classifier prompt
+_TAG_DESCRIPTIONS: list[tuple[str, str]] = [
+    (tag_name, ", ".join(keywords[:4]))
+    for tag_name, keywords in TAG_KEYWORDS.items()
+]
+
+# State collections (set by main() after loading state)
+_STATE_COLLECTIONS: dict = {}
+
+# Gemini classification enabled flag (set after first attempt — disabled
+# if the API key is missing or all attempts fail)
+_GEMINI_ENABLED = _HAS_GEMINI
 
 print(f"Loaded {len(COLLECTION_KEYWORD_MAP)} collection rules, "
       f"{len(TAG_KEYWORDS)} tag keyword groups, "
@@ -541,29 +563,42 @@ def process_comparison(bookmark: dict) -> str:
 
     # Fetch page content for richer inference (cached per URL)
     page_content = fetch_page_cached(link)
-    rich_text = None
-    if page_content and page_content.get("body_text"):
-        rich_text = (title + " " + (domain or "") + " "
-                     + page_content.get("meta_description", "") + " "
-                     + page_content.get("body_text", ""))
 
-    # Run inference (same as for new bookmarks)
-    inferred_tags = infer_real_tags(title, domain, rich_text=rich_text)
-    if page_content and page_content.get("body_text"):
-        inferred_note = build_note_from_content(page_content, title)
+    # Try Gemini classification first
+    gemini = _try_gemini_classification(title, link, page_content)
+
+    if gemini:
+        inferred_tags = gemini.get("tags", [])
+        inferred_coll_id = gemini.get("collection_id")
+        inferred_coll_title = gemini.get("collection", "")
     else:
-        inferred_note = infer_note(title, domain, link)
-    inferred_coll_id = None
-    inferred_coll_title = None
+        rich_text = None
+        if page_content and page_content.get("body_text"):
+            rich_text = (title + " " + (domain or "") + " "
+                         + page_content.get("meta_description", "") + " "
+                         + page_content.get("body_text", ""))
+        inferred_tags = infer_real_tags(title, domain, rich_text=rich_text)
+        inferred_coll_id = None
+        inferred_coll_title = None
 
     current_coll_id = existing_coll.get("$id")
     is_unsorted = current_coll_id in (None, -1, 0)
-    if is_unsorted:
-        match = find_collection(title, domain, rich_text=rich_text)
+
+    if gemini and inferred_coll_id and is_unsorted:
+        # Gemini already assigned a collection, skip keyword matching
+        pass
+    elif is_unsorted:
+        match = find_collection(title, domain, rich_text=rich_text if not gemini else None)
         if match:
             inferred_coll_id, inferred_coll_title = match
     else:
         inferred_coll_id = current_coll_id  # keep existing
+
+    # Note inference (Gemini doesn't handle notes — use existing logic)
+    if page_content and page_content.get("body_text"):
+        inferred_note = build_note_from_content(page_content, title)
+    else:
+        inferred_note = infer_note(title, domain, link)
 
     # Domain fingerprint cache: supplement tags & collection with cached signals
     domain_key = urlparse(link).netloc.lower() if link else domain
@@ -705,6 +740,66 @@ def load_state():
         return json.load(f)
 
 
+def _try_gemini_classification(
+    title: str,
+    link: str,
+    page_content: Optional[dict],
+) -> Optional[dict]:
+    """Try Gemini classification, falling back to keyword rules on failure.
+
+    Returns None if Gemini is unavailable, disabled, or returns no result.
+    """
+    global _GEMINI_ENABLED
+
+    if not _GEMINI_ENABLED or not page_content:
+        return None
+    if not _STATE_COLLECTIONS:
+        return None
+
+    body = page_content.get("body_text", "") or ""
+    meta = page_content.get("meta_description", "") or ""
+    if not body.strip() and not meta.strip():
+        return None
+
+    result = _classify_bookmark(
+        title, link, body, meta,
+        _STATE_COLLECTIONS, _TAG_DESCRIPTIONS,
+    )
+
+    if result is None:
+        return None
+
+    # Map collection name to ID. Handles both flat names ("Italy") and
+    # hierarchical paths ("Travel > Italy") — extracts the leaf from paths.
+    coll_name = result.get("collection", "")
+    if coll_name:
+        # Try full path or title directly
+        coll_id = COLLECTION_TITLE_TO_ID.get(coll_name)
+        if not coll_id and " > " in coll_name:
+            # Extract leaf from hierarchical path
+            leaf = coll_name.rsplit(" > ", 1)[-1]
+            coll_id = COLLECTION_TITLE_TO_ID.get(leaf)
+            if not coll_id:
+                coll_name = leaf  # Fall back to leaf-only lookup below
+        if coll_id:
+            result["collection_id"] = coll_id
+        else:
+            # Not in keyword map — search state collections by title
+            search_name = coll_name.rsplit(" > ", 1)[-1] if " > " in coll_name else coll_name
+            for cid, info in _STATE_COLLECTIONS.items():
+                if isinstance(info, dict) and info.get("title") == search_name:
+                    try:
+                        result["collection_id"] = int(cid)
+                    except (ValueError, TypeError):
+                        pass
+                    break
+            else:
+                # Can't resolve collection, strip it
+                result["collection"] = ""
+
+    return result
+
+
 def process_one(bookmark: dict):
     """Process a single bookmark through Phases 3a → 3d.
 
@@ -731,13 +826,25 @@ def process_one(bookmark: dict):
 
     # Fetch page content for richer inference (cached per URL)
     page_content = fetch_page_cached(link)
+
+    # Try Gemini classification first (falls back to keyword rules on failure)
+    gemini = _try_gemini_classification(title, link, page_content)
+    _gemini_coll_title: Optional[str] = None
+    _gemini_coll_id: Optional[int] = None
+
     rich_text = None
-    if page_content and page_content.get("body_text"):
+    if not gemini and page_content and page_content.get("body_text"):
         rich_text = (title + " " + (domain or "") + " "
                      + page_content.get("meta_description", "") + " "
                      + page_content.get("body_text", ""))
 
-    real_tags = infer_real_tags(title, domain, rich_text=rich_text)
+    if gemini:
+        real_tags = gemini.get("tags", [])
+        _gemini_coll_title = gemini.get("collection", "")
+        _gemini_coll_id = gemini.get("collection_id")
+        # If Gemini returned a collection ID, skip keyword collection matching
+    else:
+        real_tags = infer_real_tags(title, domain, rich_text=rich_text)
     if page_content and page_content.get("body_text"):
         note = build_note_from_content(page_content, title)
     else:
@@ -749,8 +856,12 @@ def process_one(bookmark: dict):
 
     # Determine assigned collection (if any)
     _assigned_coll_id = None
-    _match = find_collection(title, domain, rich_text=rich_text) if is_unsorted else None
-    if _match:
+    if gemini and _gemini_coll_id and is_unsorted:
+        _match = (_gemini_coll_id, _gemini_coll_title)
+        _assigned_coll_id = _gemini_coll_id
+    else:
+        _match = find_collection(title, domain, rich_text=rich_text) if is_unsorted else None
+    if _match and not _assigned_coll_id:
         _assigned_coll_id = _match[0]
 
     # Domain fingerprint cache: supplement tags & collection with cached signals
@@ -888,7 +999,11 @@ def process_one(bookmark: dict):
 
 
 def main() -> int:
+    global _STATE_COLLECTIONS
     state = load_state()
+
+    # Share collections with the Gemini classifier
+    _STATE_COLLECTIONS = state.get("collections", {})
     limit = _BATCH_LIMIT_OVERRIDE if _BATCH_LIMIT_OVERRIDE is not None else _BATCH_LIMIT
     final = state.get("final_list", [])[:limit]
     total = len(final)
