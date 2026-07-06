@@ -108,7 +108,7 @@ MAX_TAGS = thresholds.get("max_tags_per_bookmark", 5)
 API_RETRIES = thresholds.get("api_retries", 3)
 API_TIMEOUT = thresholds.get("api_timeout_s", 15)
 RATE_LIMIT_DELAY = thresholds.get("rate_limit_delay_s", 0.25)
-MIN_OCCURRENCES = thresholds.get("min_occurrences", 2)  # min keyword occurrences in rich text to suggest a tag
+MIN_OCCURRENCES = thresholds.get("min_occurrences", 1)  # min word-boundary keyword hits to suggest a tag
 
 # Default batch limit (overridable via --limit N)
 _BATCH_LIMIT = thresholds.get("batch_limit", 50)
@@ -144,10 +144,25 @@ def infer_real_tags(title: str, domain: str, rich_text: Optional[str] = None) ->
     matched: list[str] = []
 
     if rich_text:
-        # Frequency-weighted scoring against full text
+        # Frequency-weighted scoring with word-boundary awareness.
+        # Use the same word-boundary regex as the no-rich_text path to
+        # prevent short keywords like "ai", "js", "os", "ci" from
+        # matching inside unrelated words (e.g. "ai" inside "main").
+        # This avoids false-positive tag assignments on non-software
+        # bookmarks whose body text happens to contain these short
+        # character sequences in unrelated compound words.
         match_text = (text + " " + rich_text.lower())
         for tag_name, keywords in TAG_KEYWORDS.items():
-            total_count = sum(match_text.count(kw) for kw in keywords)
+            total_count = 0
+            for kw in keywords:
+                if " " in kw:
+                    # Multi-word keywords: substring match (e.g. "open source")
+                    total_count += match_text.count(kw)
+                else:
+                    # Word-boundary regex with inflection support:
+                    # matches "recipe" and "recipes", "cook" and "cooks"/"cooking"/"cooked"
+                    pattern = r"(?<![a-zA-Z])" + re.escape(kw) + r"(?:s|es|ing|ed)?(?![a-zA-Z])"
+                    total_count += len(re.findall(pattern, match_text))
             if total_count >= MIN_OCCURRENCES:
                 matched.append(tag_name)
                 if len(matched) >= MAX_TAGS:
@@ -229,21 +244,35 @@ def find_collection(title: str, domain: str, rich_text: Optional[str] = None):
     text = ((title or "") + " " + (domain or "")).lower()
 
     if rich_text:
-        # Frequency-weighted scoring: highest total keyword frequency wins
+        # Frequency-weighted scoring with word-boundary awareness.
+        # Use word-boundary regex (same pattern as infer_real_tags) to
+        # prevent 2-3 character keywords like "os", "ai" from matching
+        # inside unrelated words across the page body.
         match_text = text + " " + rich_text.lower()
         best_score = 0
         best_match = None
         for keywords, coll_id, coll_title in COLLECTION_KEYWORD_MAP:
-            score = sum(match_text.count(kw) for kw in keywords)
-            # Bonus: keyword in title/domain is stronger than in body
-            title_bonus = sum(2 for kw in keywords if kw in text)
+            # Word-boundary keyword count in full text
+            score = 0
+            for kw in keywords:
+                pattern = r"(?<![a-zA-Z])" + re.escape(kw) + r"(?:s|es|ing|ed)?(?![a-zA-Z])"
+                score += len(re.findall(pattern, match_text))
+            # Bonus: keyword in title/domain counts double
+            # Use word-boundary match for the bonus too
+            title_bonus = 0
+            for kw in keywords:
+                pat = r"(?<![a-zA-Z])" + re.escape(kw) + r"(?:s|es|ing|ed)?(?![a-zA-Z])"
+                if re.search(pat, text):
+                    title_bonus += 2
             score += title_bonus
             if score > best_score:
                 best_score = score
                 best_match = (coll_id, coll_title)
 
-        # Minimum cumulative score of 2 to avoid noise
-        if best_score >= 2:
+        # Minimum cumulative score of 1 to return a result
+        # (word-boundary matching already prevents false-positives
+        # from short substring matches like "os" inside "compose")
+        if best_score >= 1:
             return best_match
         return None
     else:

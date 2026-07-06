@@ -27,7 +27,7 @@
     },
     {
       "id": "coll-food-drink",
-      "keywords": ["recipe", "cooking", "food", "kitchen", "cuisine"],
+      "keywords": ["recipe", "cooking", "food", "kitchen", "cuisine", "cook", "bake", "fry", "grill", "roast", "sear", "braise", "stew", "simmer", "boil", "steam", "beverage", "drink", "wine", "cocktail", "meal", "dinner", "lunch", "breakfast", "snack", "dish", "ingredient", "sauce", "spice", "herb", "gourmet", "restaurant", "baking", "dessert", "bread", "pasta", "soup", "salad"],
       "collection_id": 70857521,
       "collection_title": "Food & Drink",
       "weight": 1.0
@@ -156,7 +156,7 @@
     "gaming": ["gaming", "game", "steam", "bg3", "diablo", "baldurs gate"],
     "music": ["music", "audio", "spotify"],
     "travel": ["travel", "vacation", "trip", "hotel"],
-    "food": ["food", "recipe", "cooking", "bbq", "grilling", "cook"],
+    "food": ["food", "recipe", "cooking", "bbq", "grilling", "cook", "bake", "baking", "fry", "fried", "grill", "roast", "sear", "braise", "simmer", "boil", "steam", "meal", "dinner", "lunch", "breakfast", "snack", "dish", "ingredient", "sauce", "spice", "herb", "gourmet", "restaurant", "dessert", "bread", "pasta", "soup", "salad"],
     "fitness": ["fitness", "exercise", "workout", "health"],
     "password-management": ["password", "bitwarden", "1password", "vault"],
     "self-hosted": ["self-hosted", "self hosted"]
@@ -221,7 +221,7 @@
   "thresholds": {
     "collection_oversize_threshold": 25,
     "max_tags_per_bookmark": 5,
-    "match_score_minimum": 10,
+    "match_score_minimum": 1,
     "no_match_cluster_min": 3,
     "confidence_auto_approve": 0.95,
     "confidence_flag_review": 0.70,
