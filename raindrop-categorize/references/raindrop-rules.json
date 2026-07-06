@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created": "2026-06-14T00:00:00Z",
-  "last_updated": "2026-06-14T00:00:00Z",
+  "last_updated": "2026-07-07T00:00:00Z",
 
   "collection_keywords": [
     {
@@ -47,13 +47,6 @@
       "weight": 1.0
     },
     {
-      "id": "coll-firmware-os",
-      "keywords": ["linux", "os", "firmware", "openwrt", "gl-inet", "router"],
-      "collection_id": 70857517,
-      "collection_title": "Firmware & OS",
-      "weight": 1.0
-    },
-    {
       "id": "coll-home-living",
       "keywords": ["home", "living", "house", "garden", "furniture", "decor", "renovation"],
       "collection_id": 70857525,
@@ -75,45 +68,10 @@
       "weight": 1.0
     },
     {
-      "id": "coll-macos",
-      "keywords": ["macos", "mac", "apple", "homebrew", "brew"],
-      "collection_id": 70864186,
-      "collection_title": "macOS",
-      "weight": 1.0
-    },
-    {
-      "id": "coll-security",
-      "keywords": ["security", "privacy", "vpn", "encrypt", "password", "firewall", "auth"],
-      "collection_id": 70864189,
-      "collection_title": "Security & Privacy",
-      "weight": 1.0
-    },
-    {
-      "id": "coll-ai",
-      "keywords": ["ai", "llm", "gpt", "claude", "openai", "machine.learning", "ml"],
-      "collection_id": 70864187,
-      "collection_title": "AI",
-      "weight": 1.0
-    },
-    {
       "id": "coll-music",
       "keywords": ["music", "song", "spotify", "band", "album", "audio", "podcast"],
       "collection_id": 70864185,
       "collection_title": "Music",
-      "weight": 1.0
-    },
-    {
-      "id": "coll-frontend",
-      "keywords": ["frontend", "css", "tailwind", "react", "vue", "web.design", "svelte"],
-      "collection_id": 70864184,
-      "collection_title": "Frontend",
-      "weight": 1.0
-    },
-    {
-      "id": "coll-database",
-      "keywords": ["database", "sql", "postgres", "mysql", "sqlite", "redis", "mongo"],
-      "collection_id": 70859700,
-      "collection_title": "Database",
       "weight": 1.0
     }
   ],
@@ -131,19 +89,19 @@
     "rust": ["rust", "cargo"],
     "ruby": ["ruby", "rails"],
     "golang": ["golang", "go "],
-    "javascript": ["javascript", "js", "node", "nodejs", "typescript", "ts"],
+    "javascript": ["javascript", "node", "nodejs", "typescript"],
     "dotfiles": ["dotfile", "dotfiles", "chezmoi"],
     "neovim": ["neovim", "nvim"],
     "git": ["git"],
     "terminal": ["terminal", "shell", "zsh", "bash", "fish"],
     "hyprland": ["hyprland"],
     "wayland": ["wayland", "wlroots"],
-    "deployment": ["deploy", "deployment", "ci/cd", "ci", "cd"],
+    "deployment": ["deploy", "deployment", "ci/cd"],
     "devtools": ["devtool", "developer tool", "ide", "code editor"],
     "cli": ["cli", "command line"],
     "networking": ["network", "networking", "dns", "proxy", "traefik", "nginx", "caddy"],
     "storage": ["storage", "nas", "zfs", "backup"],
-    "virtualization": ["virtual", "vm", "proxmox", "kvm", "qemu"],
+    "virtualization": ["virtual", "proxmox", "kvm", "qemu"],
     "container": ["container", "lxc", "incus"],
     "automation": ["automation", "ansible", "terraform", "opentofu", "infrastructure as code"],
     "macos": ["macos", "mac os", "darwin", "macbook"],
