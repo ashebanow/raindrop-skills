@@ -591,7 +591,21 @@ def process_comparison(bookmark: dict) -> str:
 
     # Apply update only if verdict is "better"
     if verdict["overall_verdict"] != "better":
-        return "compared"  # Stats recorded, no API call
+        # Still clear the description field even if note/tags/collection
+        # are unchanged — avoids stale descriptions lingering on filler
+        # bookmarks that were categorized before description-clearing was
+        # part of the pipeline.
+        if not DRY_RUN:
+            api("PUT", f"/raindrop/{rid}", {"description": ""})
+            log_entry("update_raindrop", {
+                "raindrop_id": rid,
+                "title": title[:80],
+                "fields_changed": ["description"],
+                "note_preview": "",
+                "phase": "comparison",
+                "precision_score": _precision_score,
+            })
+        return "compared"  # Stats recorded, no API call for other fields
 
     # Apply the improvements
     phase_ok = True
