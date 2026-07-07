@@ -304,10 +304,10 @@ for idx, rd in enumerate(eligible):
                     body_text = re.sub(r'<[^>]+>', ' ', body_match.group(1))
                     body_text = re.sub(r'\s+', ' ', body_text).strip()[:500]
                 note_content = page_title
-                if meta_desc:
-                    note_content += " — " + meta_desc
-                elif body_text:
+                if body_text:
                     note_content += " — " + body_text[:200]
+                elif meta_desc:
+                    note_content += " — " + meta_desc
                 print(f"    Fetched URL: {page_title}")
             except Exception as e:
                 print(f"    Could not fetch URL: {e}")

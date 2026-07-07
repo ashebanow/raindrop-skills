@@ -235,18 +235,17 @@ def infer_note(title: str, domain: str, link: str) -> str:
 def build_note_from_content(page_content: dict, title: str) -> str:
     """Build a human-readable note from fetched page content.
 
+    Uses body_text as the primary source. meta_description is deliberately
+    excluded — Raindrop auto-generates its ``excerpt`` field from the same
+    meta_description, so using it would create duplicate text in the UI.
+
     Priority:
-    1. meta_description (truncated to 200 chars)
-    2. body_text first 150 chars
-    3. Fall back to template-driven infer_note()
+    1. body_text first 200 chars
+    2. Fall back to title
     """
-    meta_desc = (page_content.get("meta_description") or "").strip()
-    if meta_desc:
-        return meta_desc[:200]
     body_text = (page_content.get("body_text") or "").strip()
     if body_text:
-        return body_text[:150]
-    # No usable content from page
+        return body_text[:200]
     return f"Bookmark: {title}."
 
 
@@ -594,8 +593,19 @@ def process_comparison(bookmark: dict) -> str:
     else:
         inferred_coll_id = current_coll_id  # keep existing
 
-    # Note inference (Gemini doesn't handle notes — use existing logic)
-    if page_content and page_content.get("body_text"):
+    # Note inference: existing user description takes priority
+    existing_desc = (bookmark.get("description") or "").strip()
+    if existing_desc and _is_handwritten(existing_desc):
+        # User-typed description — preserve it as the core of the note
+        if page_content and page_content.get("body_text"):
+            page_note = build_note_from_content(page_content, title)
+            if page_note not in existing_desc:
+                inferred_note = existing_desc + "\n\n" + page_note
+            else:
+                inferred_note = existing_desc
+        else:
+            inferred_note = existing_desc
+    elif page_content and page_content.get("body_text"):
         inferred_note = build_note_from_content(page_content, title)
     else:
         inferred_note = infer_note(title, domain, link)
@@ -660,22 +670,25 @@ def process_comparison(bookmark: dict) -> str:
         # bookmarks that were categorized before description-clearing was
         # part of the pipeline.
         if not DRY_RUN:
-            api("PUT", f"/raindrop/{rid}", {"description": ""})
-            log_entry("update_raindrop", {
-                "raindrop_id": rid,
-                "title": title[:80],
-                "fields_changed": ["description"],
-                "note_preview": "",
-                "phase": "comparison",
-                "precision_score": _precision_score,
-            })
+            desc_result = api("PUT", f"/raindrop/{rid}", {"description": None})
+            if desc_result and desc_result.get("result"):
+                log_entry("update_raindrop", {
+                    "raindrop_id": rid,
+                    "title": title[:80],
+                    "fields_changed": ["description"],
+                    "note_preview": "",
+                    "phase": "comparison",
+                    "precision_score": _precision_score,
+                })
+            else:
+                print(f"  ⚠ {title[:50]} — description clear failed (API error)", flush=True)
         return "compared"  # Stats recorded, no API call for other fields
 
     # Apply the improvements
     phase_ok = True
 
     # 3a: Note update
-    note_result = api("PUT", f"/raindrop/{rid}", {"note": inferred_note, "description": ""})
+    note_result = api("PUT", f"/raindrop/{rid}", {"note": inferred_note, "description": None})
     if note_result and note_result.get("result"):
         log_entry("update_raindrop", {
             "raindrop_id": rid,
@@ -800,6 +813,38 @@ def _try_gemini_classification(
     return result
 
 
+def _is_handwritten(desc: str) -> bool:
+    """Heuristic: does this description look user-typed vs AI-generated?
+
+    User-typed descriptions tend to be longer, have personal voice,
+    URL-specific commentary, and natural punctuation.  AI-generated
+    descriptions (Raindrop auto-summary) tend to be short, generic,
+    and lack personal voice.
+
+    Returns True if the description is likely user-typed.
+    """
+    desc = desc.strip()
+    if not desc:
+        return False
+    # Short single-sentence descriptions are likely AI-generated
+    if len(desc) < 50 and desc.count(".") <= 1:
+        return False
+    # If it has multiple sentences, personal pronouns, or URL-specific
+    # commentary markers, it's likely user-typed.
+    sentences = [s.strip() for s in desc.replace("!", ".").replace("?", ".").split(".") if s.strip()]
+    if len(sentences) >= 2:
+        return True
+    # Long single-sentence descriptions with detail are likely user-typed
+    if len(desc) > 100:
+        return True
+    # Contains personal voice markers
+    personal_markers = ["my ", "I ", "I'm", "we ", "our ", "you ", "your "]
+    desc_lower = desc.lower()
+    if any(marker in desc_lower for marker in personal_markers):
+        return True
+    return False
+
+
 def process_one(bookmark: dict):
     """Process a single bookmark through Phases 3a → 3d.
 
@@ -845,7 +890,23 @@ def process_one(bookmark: dict):
         # If Gemini returned a collection ID, skip keyword collection matching
     else:
         real_tags = infer_real_tags(title, domain, rich_text=rich_text)
-    if page_content and page_content.get("body_text"):
+
+    # --- Note generation: existing user description takes priority ---
+    existing_desc = (bookmark.get("description") or "").strip()
+    existing_note = (bookmark.get("note") or "").strip()
+
+    if existing_desc and _is_handwritten(existing_desc):
+        # User-typed description — preserve it as the core of the note.
+        # Append page-derived content if available for additional context.
+        if page_content and page_content.get("body_text"):
+            page_note = build_note_from_content(page_content, title)
+            if page_note not in existing_desc:
+                note = existing_desc + "\n\n" + page_note
+            else:
+                note = existing_desc
+        else:
+            note = existing_desc
+    elif page_content and page_content.get("body_text"):
         note = build_note_from_content(page_content, title)
     else:
         note = infer_note(title, domain, link)
@@ -895,7 +956,7 @@ def process_one(bookmark: dict):
     phase_3c_ok = False
 
     # --- Phase 3a: note + clear description ---
-    result = api("PUT", f"/raindrop/{rid}", {"note": note, "description": ""})
+    result = api("PUT", f"/raindrop/{rid}", {"note": note, "description": None})
     if result and result.get("result"):
         phase_3a_ok = True
         if not DRY_RUN:

@@ -73,6 +73,10 @@ print(f"Scanning {len(non_empty)} collections sequentially...", flush=True)
 seen = set()
 new_pool, filler_p1, filler_p2 = [], [], []
 
+# Collection 0 (/raindrops/0) returns ALL bookmarks in the library, so we
+# only need to scan it once. Subsequent collections would just return
+# already-seen bookmarks — skipping them saves ~200 API calls and avoids
+# the 600s timeout on slow API days.
 for idx, c in enumerate(non_empty):
     cid = c["_id"]
     page = 0
@@ -115,6 +119,10 @@ for idx, c in enumerate(non_empty):
             print(f"  ⚠ col[{cid}]: {str(e)[:60]}", flush=True)
             time.sleep(2)
             break
+    # After scanning collection 0 (all bookmarks), skip remaining collections
+    if cid == 0:
+        print(f"  (scanned {len(non_empty) - 1} collections skipped — all bookmarks already seen via _id=0)", flush=True)
+        break
     time.sleep(0.3)
 
 filler_p1.sort(key=lambda r: r.get("lastUpdate", ""))
