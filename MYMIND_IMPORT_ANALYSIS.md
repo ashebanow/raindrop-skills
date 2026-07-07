@@ -84,6 +84,23 @@ MyMind auto-deduplicates by URL. `POST /objects` with the same URL returns `200 
 - No risk of creating duplicates
 - Can run in batches across multiple days/months if needed
 
+## Rate Limiting (Dynamic)
+
+MyMind sends rate limit state in every response header. Instead of fixed-delay pacing, the import script should parse these headers and adjust on the fly:
+
+```
+RateLimit-Policy: "burst";q=10000;w=300, "sustained";q=100000;w=2592000
+RateLimit:        "burst";r=9990;t=300, "sustained";r=99641;t=2589945
+RateLimit-Cost:   10
+```
+
+- `r` = credits remaining in window
+- `t` = seconds until window resets
+
+**Strategy:** after each request, check remaining credits. If either `burst` or `sustained` is nearing exhaustion (r < 100), sleep until that window's `t` resets. Otherwise, compute a dynamic delay proportional to remaining burst budget — fast when headroom is plentiful, gentle when it's tight. On `429 Too Many Requests`, parse the `RateLimit` header for every policy with `r=0` and sleep until the slowest exhausted window resets.
+
+This approach eliminates the need for a fixed `REQUEST_DELAY` constant and adapts to plan tier, concurrent usage, and window timing automatically.
+
 ## Objects Created One at a Time
 
-No batch endpoint. Each bookmark is a separate `POST /objects` call. At ~2 req/s pacing, full import takes ~45 minutes. Fast enough for a one-shot script.
+No batch endpoint. Each bookmark is a separate `POST /objects` call. With dynamic rate limiting, full import throughput depends on plan and current usage rather than a fixed pacing delay.
