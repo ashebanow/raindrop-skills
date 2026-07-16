@@ -1,0 +1,18 @@
+{
+  "id": "b9ed039d1",
+  "name": "Generate HTML visualization",
+  "command": "cd /Users/ashebanow/Development/ai/raindrop-skills && graphify export html 2>&1",
+  "status": "completed",
+  "outputPath": ".pi/tasks/session-56133-56133/b9ed039d1.output",
+  "cwd": "/Users/ashebanow/Development/ai/raindrop-skills",
+  "startTime": 1784163581897,
+  "endTime": 1784163582049,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 56378,
+  "bytesWritten": 59,
+  "isAgent": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true
+}

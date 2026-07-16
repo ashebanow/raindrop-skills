@@ -1,0 +1,18 @@
+{
+  "id": "bf2931226",
+  "name": "AST extraction for code files",
+  "command": "cd /Users/ashebanow/Development/ai/raindrop-skills && $(cat graphify-out/.graphify_python) -c \"\nimport sys, json\nfrom graphify.extract import collect_files, extract\nfrom pathlib import Path\n\ncode_files = []\ndetect = json.loads(Path('graphify-out/.graphify_detect.json').read_text(encoding='utf-8'))\nfor f in detect.get('files', {}).get('code', []):\n    code_files.extend(collect_files(Path(f)) if Path(f).is_dir() else [Path(f)])\n\nif code_files:\n    result = extract(code_files, cache_root=Path('.'))\n    Path('graphify-out/.graphify_ast.json').write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding='utf-8')\n    print(f'AST: {len(result[\\\"nodes\\\"])} nodes, {len(result[\\\"edges\\\"])} edges')\nelse:\n    Path('graphify-out/.graphify_ast.json').write_text(json.dumps({'nodes':[],'edges':[],'input_tokens':0,'output_tokens':0}, ensure_ascii=False), encoding='utf-8')\n    print('No code files - skipping AST extraction')\n\"",
+  "status": "completed",
+  "outputPath": ".pi/tasks/session-56133-56133/bf2931226.output",
+  "cwd": "/Users/ashebanow/Development/ai/raindrop-skills",
+  "startTime": 1784163529047,
+  "endTime": 1784163529547,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 56293,
+  "bytesWritten": 234,
+  "isAgent": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true
+}

@@ -1,0 +1,7 @@
+name: raindrop-skills
+graphify:
+  exportTarget: graphify-out/wiki
+  sourceDirs:
+    - src
+hooks:
+  postCommit: true

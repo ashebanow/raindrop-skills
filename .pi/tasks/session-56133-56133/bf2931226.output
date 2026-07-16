@@ -1,0 +1,2 @@
+  warning: 1 source file(s) produced zero nodes and are absent from the graph: raindrop-rules.json. A re-run will retry them (empties are no longer cached); if it persists, please report the file(s) (#1666).
+AST: 351 nodes, 698 edges

@@ -1,0 +1,18 @@
+{
+  "id": "ba0baabca",
+  "name": "Gemini semantic extraction for docs",
+  "command": "cd /Users/ashebanow/Development/ai/raindrop-skills && $(cat graphify-out/.graphify_python) -c \"\nimport json\nfrom graphify.llm import extract_corpus_parallel\nfrom pathlib import Path\n\ndetect = json.loads(Path('graphify-out/.graphify_detect.json').read_text(encoding='utf-8'))\ndoc_files = [f for cat in ('document', 'paper', 'image') for f in detect['files'].get(cat, [])]\n\nif doc_files:\n    result = extract_corpus_parallel(doc_files, backend='gemini')\n    Path('graphify-out/.graphify_semantic.json').write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding='utf-8')\n    print(f'Semantic: {len(result[\\\"nodes\\\"])} nodes, {len(result[\\\"edges\\\"])} edges')\n    print(f'Tokens: {result.get(\\\"input_tokens\\\", 0):,} in / {result.get(\\\"output_tokens\\\", 0):,} out')\nelse:\n    Path('graphify-out/.graphify_semantic.json').write_text(json.dumps({'nodes':[],'edges':[],'hyperedges':[],'input_tokens':0,'output_tokens':0}, ensure_ascii=False), encoding='utf-8')\n    print('No docs - skipping semantic extraction')\n\"",
+  "status": "completed",
+  "outputPath": ".pi/tasks/session-56133-56133/ba0baabca.output",
+  "cwd": "/Users/ashebanow/Development/ai/raindrop-skills",
+  "startTime": 1784163529049,
+  "endTime": 1784163538196,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 56294,
+  "bytesWritten": 3452,
+  "isAgent": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true
+}

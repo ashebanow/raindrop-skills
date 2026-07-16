@@ -1,0 +1,27 @@
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-categorize/scripts/raindrop_api.py'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-categorize/scripts/process-batch.py'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-categorize/scripts/scan-batch.py'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-categorize/scripts/cron_run.py'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-categorize/scripts/apply-proposals.py'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-categorize/scripts/revert-regression.py'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-categorize/scripts/verify-holdout.py'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-categorize/scripts/suggest-rules.py'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'shared/raindrop_common.py'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-categorize/references/raindrop-rules.json'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-linter/scripts/raindrop_linter.py'; the file was not dispatched for extraction
+  _scs(
+/Users/ashebanow/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/llm.py:1927: RuntimeWarning: semantic cache skipped out-of-scope source_file 'raindrop-linter/scripts/cron_run.py'; the file was not dispatched for extraction
+  _scs(
+[graphify] WARNING: 20/20 dispatched file(s) produced no nodes and are absent from the graph: .graphify.yaml, auto-approve.md, coll-scorer.md, content-fetcher.md, cron-wirer.md (+15 more). The model returned a response but omitted them; a re-run will retry them.
+Semantic: 12 nodes, 11 edges
+Tokens: 37,733 in / 2,036 out
